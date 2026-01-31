@@ -1,0 +1,65 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "stark-prime-t2s"
+version = "0.1.0"
+description = "Text-to-SQL/SPARQL agent for STaRK-Prime biomedical knowledge base"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10,<3.14"
+authors = [
+    { name = "STaRK T2S Agent" }
+]
+
+dependencies = [
+    # LangChain v1 ecosystem
+    "langchain>=1.0.0",
+    "langgraph>=1.0.0",
+    "langchain-openai>=0.3.0",
+    "langchain-community>=0.3.0",
+    
+    # Database / Graph
+    "sqlalchemy>=2.0.0",
+    "rdflib>=7.0.0",
+    "psycopg2-binary>=2.9.0",  # PostgreSQL driver
+    "SPARQLWrapper>=2.0.0",     # SPARQL endpoint client
+    "qdrant-client>=1.9.0",     # Vector database for entity resolution
+    
+    # Data processing
+    "torch>=2.0.0",
+    "requests>=2.31.0",
+    
+    # Utilities
+    "pydantic>=2.0.0",
+    "python-dotenv>=1.0.0",
+    "tqdm>=4.66.0",
+    
+    # Observability (v3 uses new langfuse.langchain import path)
+    "langfuse>=3.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "ruff>=0.4.0",
+]
+
+[project.scripts]
+build-prime-stores = "stark_prime_t2s.scripts.build_stores:main"
+demo-chat = "stark_prime_t2s.scripts.demo_chat:main"
+run-benchmark = "stark_prime_t2s.benchmark.run_prime:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/stark_prime_t2s"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+ignore = ["E501"]
+

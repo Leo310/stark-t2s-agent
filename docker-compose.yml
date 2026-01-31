@@ -1,0 +1,56 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: stark-postgres
+    environment:
+      POSTGRES_DB: stark_prime
+      POSTGRES_USER: stark
+      POSTGRES_PASSWORD: stark_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U stark -d stark_prime" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  fuseki:
+    image: stain/jena-fuseki:latest
+    container_name: stark-fuseki
+    environment:
+      ADMIN_PASSWORD: admin
+      FUSEKI_DATASET_1: prime
+    ports:
+      - "3031:3030"
+    volumes:
+      - fuseki_data:/fuseki
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:3030/$/ping" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: stark-qdrant
+    ports:
+      - "6333:6333" # REST API
+      - "6334:6334" # gRPC
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:6333/healthz" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+  fuseki_data:
+  qdrant_data:
+
+

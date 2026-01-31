@@ -1,0 +1,576 @@
+"""LangChain v1 agent for STaRK-Prime text-to-SQL/SPARQL with Langfuse v3 observability."""
+
+from typing import Any
+
+from langchain.agents import create_agent
+from langchain.chat_models import init_chat_model
+
+from stark_prime_t2s.config import (
+    LANGFUSE_BASE_URL,
+    LANGFUSE_ENABLED,
+    LANGFUSE_PUBLIC_KEY,
+    LANGFUSE_SECRET_KEY,
+    LLM_PROVIDER,
+    MAX_AGENT_ITERATIONS,
+    MAX_QUERY_ROWS,
+    OPENAI_API_KEY,
+    OPENAI_MODEL,
+    OPENROUTER_API_KEY,
+    OPENROUTER_BASE_URL,
+    OPENROUTER_MODEL,
+)
+from stark_prime_t2s.tools.entity_resolver import (
+    build_entity_index,
+    get_search_entities_tool,
+)
+from stark_prime_t2s.tools.execute_query import (
+    get_execute_query_tool,
+    get_schema_and_vocab_summary,
+)
+
+
+SYSTEM_PROMPT_TEMPLATE = """You are an expert biomedical knowledge base analyst. Your task is to answer questions about diseases, drugs, genes/proteins, pathways, molecular functions, and their relationships using the STaRK-Prime knowledge base.
+
+## Available Tools
+
+You have access to TWO tools:
+
+1. **search_entities_tool** - Semantic search to find entities by name/description
+   - Use this FIRST to resolve entity names to their IDs
+   - Handles synonyms, partial matches, and related terms
+   - Returns entity IDs that you can use in queries
+
+2. **execute_query_tool** - Execute SQL or SPARQL queries
+   - Use AFTER finding entity IDs with search_entities_tool
+   - Supports SQL (PostgreSQL) and SPARQL (Fuseki)
+
+## Two-Stage Query Process (IMPORTANT!)
+
+**ALWAYS follow this two-stage approach:**
+
+### Stage 1: Entity Resolution
+When a question mentions specific entities (diseases, drugs, genes, etc.):
+1. Use `search_entities_tool` to find the entity IDs
+2. **Call multiple searches IN PARALLEL** when resolving multiple entities
+3. Note the returned IDs for use in your query
+
+Example: For "What genes are associated with both diabetes and hypertension?"
+→ First: Call BOTH searches in parallel:
+  - `search_entities_tool("diabetes", "disease")`
+  - `search_entities_tool("hypertension", "disease")`
+→ Get: diabetes ID 12345, hypertension ID 67890
+
+### Stage 2: Query Execution  
+Use the resolved entity IDs in your SQL/SPARQL query:
+→ Then: `execute_query_tool("sql", "SELECT ... WHERE ... 12345 ... 67890 ...")`
+
+## Query Language Selection
+
+Choose the appropriate query language based on the question:
+
+- **SQL** is better for:
+  - Simple lookups by ID, name, or type
+  - Aggregations (COUNT, AVG, MAX, etc.)
+  - Joins between multiple entity types
+  - Filtering with complex conditions
+  - Questions asking "how many" or "list all"
+
+- **SPARQL** is better for:
+  - Path traversal and relationship exploration
+  - Finding connections between entities
+  - Pattern matching across the knowledge graph
+  - Questions like "what is connected to X through Y"
+
+## Knowledge Base Schema
+
+{schema_and_vocab}
+
+## Query Guidelines
+
+1. **Entity Resolution First**: ALWAYS use search_entities_tool to find entity IDs before querying.
+   Do NOT try to match entity names with SQL LIKE or SPARQL FILTER - use semantic search instead.
+
+2. **Read-only only**: Only SELECT queries are allowed. No INSERT, UPDATE, DELETE, etc.
+
+3. **Limit results**: Always use LIMIT {max_rows} unless the user specifically asks for more.
+
+4. **Be precise**: Use exact table/column names from the schema above.
+
+5. **Handle errors**: If a query fails, analyze the error and try a corrected query.
+
+6. **Node IDs are answers**: When the question asks "which" or "what", the answer is typically node IDs.
+   The benchmark expects node IDs (integers) as answers, not names.
+
+## Answer Format
+
+After getting query results, provide:
+1. A brief explanation of what you found
+2. The final answer - typically a list of node IDs that match the question
+
+For benchmark questions, the expected answer format is a comma-separated list of node IDs.
+
+## CRITICAL: Efficiency Guidelines
+
+### Parallelization
+- When resolving multiple entities, call ALL searches IN PARALLEL in ONE turn (max 4-5 searches)
+- Do NOT search for additional related proteins/genes after getting initial results
+- Use ONLY the first entity ID returned for each search (the most relevant match)
+
+### Answer Strategy
+- If queries return 0 rows, report: "Based on entity resolution, I found X, Y, Z entities relevant to your question.
+  However, the knowledge base does not contain direct relationships connecting all these criteria."
+- Partial results are valuable - report entity IDs even without relationship data
+
+## Data Model (IMPORTANT!)
+
+**Not all entity types are connected by edges!** The main relationship patterns are:
+- gene_protein ↔ disease (via associated_with, phenotype_present)
+- gene_protein ↔ gene_protein (via ppi - protein-protein interaction)
+- drug ↔ disease (via indication, contraindication, side_effect)
+- drug ↔ gene_protein (via target, enzyme, carrier, transporter)
+- gene_protein ↔ biological_process (via associated_with)
+- gene_protein ↔ anatomy (via expression_present)
+
+**There are NO direct edges between:**
+- gene_protein ↔ pathway (pathways are not connected to genes in this dataset!)
+- pathway ↔ disease
+- Most other cross-type combinations
+
+If you need to relate genes to a pathway concept, search for genes by name/function instead.
+
+## SQL Tips (Typed Schema)
+
+The database uses a TYPED SCHEMA with one table per entity/relation type:
+
+- **Entity tables** (named directly after type): `disease`, `drug`, `gene_protein`, `pathway`, etc.
+  - Columns: id (INTEGER PK), name (TEXT), description (TEXT), raw_json (TEXT)
+  
+- **Relation tables** (named directly after type): `associated_with`, `indication`, `side_effect`, `parent_child`, etc.
+  - Columns: src_id (INTEGER), dst_id (INTEGER), src_type (TEXT), dst_type (TEXT)
+
+- **Unified views** for cross-type queries:
+  - `all_nodes`: combines all entity tables (id, type, name, description, raw_json)
+  - `all_edges`: combines all relation tables (src_id, dst_id, edge_type, src_type, dst_type)
+
+Example workflow:
+1. `search_entities_tool("breast cancer", "disease")` → ID: 789
+2. `execute_query_tool("sql", "SELECT dst_id FROM indication WHERE src_id = 789")`
+
+## SPARQL Tips
+
+- Namespace prefix: sp: <http://stark.stanford.edu/prime/>
+- Node URIs: sp:node/<id>
+- Use sp:nodeId to get the integer node ID from a node URI
+- Classes: sp:Disease, sp:Drug, sp:GeneProtein, etc.
+- Properties: sp:associatedWith, sp:indication, sp:sideEffect, etc.
+
+Example workflow:
+1. `search_entities_tool("insulin", "gene_protein")` → ID: 456
+2. `execute_query_tool("sparql", "PREFIX sp: <http://stark.stanford.edu/prime/> SELECT ?related WHERE {{ sp:node/456 sp:associatedWith ?related }}")`
+
+Now answer the user's question using the two-stage approach.
+"""
+
+
+# ---------------------------------------------------------------------------
+# Langfuse v3 Observability
+# ---------------------------------------------------------------------------
+
+_langfuse_initialized = False
+_langfuse_handler = None
+
+
+def _init_langfuse():
+    """Initialize Langfuse client (singleton pattern for v3).
+
+    In v3, the Langfuse client uses a singleton pattern. We initialize it once
+    with environment variables and then access it via get_client().
+    """
+    global _langfuse_initialized
+
+    if _langfuse_initialized:
+        return True
+
+    if not LANGFUSE_ENABLED:
+        return False
+
+    if not LANGFUSE_SECRET_KEY or not LANGFUSE_PUBLIC_KEY:
+        print("  Warning: Langfuse credentials not set, tracing disabled")
+        return False
+
+    try:
+        import os
+
+        # Set environment variables for Langfuse v3
+        os.environ["LANGFUSE_SECRET_KEY"] = LANGFUSE_SECRET_KEY
+        os.environ["LANGFUSE_PUBLIC_KEY"] = LANGFUSE_PUBLIC_KEY
+        os.environ["LANGFUSE_BASE_URL"] = LANGFUSE_BASE_URL
+
+        # Import and initialize the Langfuse client (v3 singleton pattern)
+        from langfuse import Langfuse
+
+        # Initialize the singleton client
+        Langfuse(
+            public_key=LANGFUSE_PUBLIC_KEY,
+            secret_key=LANGFUSE_SECRET_KEY,
+            host=LANGFUSE_BASE_URL,
+        )
+
+        _langfuse_initialized = True
+        print(f"  ✓ Langfuse v3 tracing enabled ({LANGFUSE_BASE_URL})")
+        return True
+
+    except ImportError:
+        print("  Warning: langfuse not installed, tracing disabled")
+        return False
+    except Exception as e:
+        print(f"  Warning: Could not initialize Langfuse: {e}")
+        return False
+
+
+def get_langfuse_handler():
+    """Get the Langfuse callback handler for LangChain tracing.
+
+    In v3, CallbackHandler() takes no constructor arguments.
+    Trace attributes (user_id, session_id, tags) are passed via
+    chain config metadata with 'langfuse_' prefix.
+
+    Returns:
+        CallbackHandler if Langfuse is configured, None otherwise.
+    """
+    global _langfuse_handler
+
+    if not _init_langfuse():
+        return None
+
+    if _langfuse_handler is None:
+        try:
+            from langfuse.langchain import CallbackHandler
+
+            # v3: CallbackHandler takes no constructor arguments
+            _langfuse_handler = CallbackHandler()
+        except Exception as e:
+            print(f"  Warning: Could not create Langfuse handler: {e}")
+            return None
+
+    return _langfuse_handler
+
+
+def get_callbacks() -> list:
+    """Get the list of callback handlers for the agent.
+
+    Returns:
+        List of callback handlers (may be empty if none configured).
+    """
+    callbacks = []
+
+    langfuse = get_langfuse_handler()
+    if langfuse:
+        callbacks.append(langfuse)
+
+    return callbacks
+
+
+def flush_langfuse():
+    """Flush any pending Langfuse events.
+
+    In v3, flush is called on the client instance via get_client().
+    Call this in short-lived scripts to ensure all events are sent.
+    """
+    if not _langfuse_initialized:
+        return
+
+    try:
+        from langfuse import get_client
+
+        client = get_client()
+        client.flush()
+    except Exception:
+        pass  # Silently ignore flush errors
+
+
+# ---------------------------------------------------------------------------
+# Agent Creation
+# ---------------------------------------------------------------------------
+
+
+def get_system_prompt() -> str:
+    """Generate the system prompt with current schema/vocabulary.
+
+    Returns:
+        The complete system prompt string
+    """
+    schema_and_vocab = get_schema_and_vocab_summary()
+    return SYSTEM_PROMPT_TEMPLATE.format(
+        schema_and_vocab=schema_and_vocab,
+        max_rows=MAX_QUERY_ROWS,
+    )
+
+
+def create_stark_prime_agent(
+    model: str | None = None,
+    temperature: float = 0.0,
+    build_entity_index_on_start: bool = True,
+    **kwargs: Any,
+):
+    """Create a LangChain agent for STaRK-Prime queries.
+
+    This creates an agent using LangChain v1's create_agent function,
+    which internally uses LangGraph for the agent loop.
+
+    The agent uses a two-stage approach:
+    1. Entity resolution via semantic search (search_entities_tool)
+    2. Query execution via SQL/SPARQL (execute_query_tool)
+
+    Args:
+        model: The model to use. Defaults to config.OPENAI_MODEL or config.OPENROUTER_MODEL.
+        temperature: The temperature for the model. Defaults to 0.0 for deterministic output.
+        build_entity_index_on_start: Whether to build/load the entity index on startup.
+            Set to False if you've already built the index. Defaults to True.
+        **kwargs: Additional arguments passed to init_chat_model.
+            Use provider="openai" or provider="openrouter" to override the default.
+
+    Returns:
+        A LangChain agent that can answer questions about STaRK-Prime.
+    """
+    # Determine which provider to use and validate configuration
+    provider = kwargs.pop("provider", None) or LLM_PROVIDER
+
+    if provider == "openrouter":
+        if not OPENROUTER_API_KEY:
+            raise ValueError(
+                "OPENROUTER_API_KEY not set. Please set it in your .env file or environment."
+            )
+        api_key = OPENROUTER_API_KEY
+        base_url = OPENROUTER_BASE_URL
+        model_name = model or OPENROUTER_MODEL
+    elif provider == "openai":
+        if not OPENAI_API_KEY:
+            raise ValueError(
+                "OPENAI_API_KEY not set. Please set it in your .env file or environment."
+            )
+        api_key = OPENAI_API_KEY
+        base_url = None
+        model_name = model or OPENAI_MODEL
+    else:
+        raise ValueError(f"Unknown LLM provider: {provider}. Use 'openai' or 'openrouter'.")
+
+    # Build/load entity index for semantic search
+    if build_entity_index_on_start:
+        print("Building entity index for semantic search...")
+        build_entity_index()
+
+    # Initialize the chat model
+    init_kwargs = {
+        "temperature": temperature,
+        "api_key": api_key,
+    }
+    if base_url:
+        init_kwargs["base_url"] = base_url
+    init_kwargs.update(kwargs)
+
+    llm = init_chat_model(
+        model_name,
+        **init_kwargs,
+    )
+
+    print(f"  Agent ready (provider: {provider}, model: {model_name})")
+
+    # Get the tools (two-stage approach)
+    search_tool = get_search_entities_tool()
+    query_tool = get_execute_query_tool()
+
+    # Get the system prompt
+    system_prompt = get_system_prompt()
+
+    # Create the agent using LangChain v1's create_agent
+    agent = create_agent(
+        llm,
+        tools=[search_tool, query_tool],
+        system_prompt=system_prompt,
+    )
+
+    return agent
+
+
+# ---------------------------------------------------------------------------
+# Agent Invocation with Tracing
+# ---------------------------------------------------------------------------
+
+
+async def run_agent_query(
+    agent,
+    question: str,
+    session_id: str | None = None,
+    user_id: str | None = None,
+    trace_name: str | None = None,
+    tags: list[str] | None = None,
+) -> dict[str, Any]:
+    """Run a query through the agent and extract the answer.
+
+    Args:
+        agent: The LangChain agent
+        question: The user's question
+        session_id: Optional session ID for Langfuse tracing
+        user_id: Optional user ID for Langfuse tracing
+        trace_name: Optional trace name for Langfuse
+        tags: Optional tags for Langfuse tracing
+
+    Returns:
+        Dict with 'answer', 'messages', and 'tool_calls' keys
+    """
+    # Build config with callbacks
+    callbacks = get_callbacks()
+    config: dict[str, Any] = {}
+
+    if callbacks:
+        config["callbacks"] = callbacks
+        config["run_name"] = trace_name or "stark_prime_query"
+
+        # v3: Trace attributes go in metadata with 'langfuse_' prefix
+        metadata: dict[str, Any] = {}
+        if session_id:
+            metadata["langfuse_session_id"] = session_id
+        if user_id:
+            metadata["langfuse_user_id"] = user_id
+        if tags:
+            metadata["langfuse_tags"] = tags
+
+        if metadata:
+            config["metadata"] = metadata
+
+    # Set recursion limit to prevent runaway loops
+    config["recursion_limit"] = MAX_AGENT_ITERATIONS
+
+    # Invoke the agent
+    result = await agent.ainvoke(
+        {"messages": [{"role": "user", "content": question}]},
+        config=config,
+    )
+
+    # Extract relevant information
+    messages = result.get("messages", [])
+
+    # Get the final assistant message
+    final_answer = ""
+    tool_calls = []
+
+    for msg in messages:
+        if hasattr(msg, "content") and hasattr(msg, "type"):
+            if msg.type == "ai":
+                final_answer = msg.content
+            elif msg.type == "tool":
+                tool_calls.append(
+                    {
+                        "name": getattr(msg, "name", "unknown"),
+                        "content": (
+                            msg.content[:500] + "..." if len(msg.content) > 500 else msg.content
+                        ),
+                    }
+                )
+
+    return {
+        "answer": final_answer,
+        "messages": messages,
+        "tool_calls": tool_calls,
+    }
+
+
+def run_agent_query_sync(
+    agent,
+    question: str,
+    session_id: str | None = None,
+    user_id: str | None = None,
+    trace_name: str | None = None,
+    tags: list[str] | None = None,
+) -> dict[str, Any]:
+    """Synchronous version of run_agent_query.
+
+    Args:
+        agent: The LangChain agent
+        question: The user's question
+        session_id: Optional session ID for Langfuse tracing
+        user_id: Optional user ID for Langfuse tracing
+        trace_name: Optional trace name for Langfuse
+        tags: Optional tags for Langfuse tracing
+
+    Returns:
+        Dict with 'answer', 'messages', and 'tool_calls' keys
+    """
+    # Build config with callbacks
+    callbacks = get_callbacks()
+    config: dict[str, Any] = {}
+
+    if callbacks:
+        config["callbacks"] = callbacks
+        config["run_name"] = trace_name or "stark_prime_query"
+
+        # v3: Trace attributes go in metadata with 'langfuse_' prefix
+        metadata: dict[str, Any] = {}
+        if session_id:
+            metadata["langfuse_session_id"] = session_id
+        if user_id:
+            metadata["langfuse_user_id"] = user_id
+        if tags:
+            metadata["langfuse_tags"] = tags
+
+        if metadata:
+            config["metadata"] = metadata
+
+    # Set recursion limit to prevent runaway loops
+    config["recursion_limit"] = MAX_AGENT_ITERATIONS
+
+    # Invoke the agent synchronously
+    result = agent.invoke(
+        {"messages": [{"role": "user", "content": question}]},
+        config=config,
+    )
+
+    # Extract relevant information
+    messages = result.get("messages", [])
+
+    # Get the final assistant message
+    final_answer = ""
+    tool_calls = []
+
+    for msg in messages:
+        if hasattr(msg, "content") and hasattr(msg, "type"):
+            if msg.type == "ai":
+                final_answer = msg.content
+            elif msg.type == "tool":
+                tool_calls.append(
+                    {
+                        "name": getattr(msg, "name", "unknown"),
+                        "content": (
+                            msg.content[:500] + "..." if len(msg.content) > 500 else msg.content
+                        ),
+                    }
+                )
+
+    return {
+        "answer": final_answer,
+        "messages": messages,
+        "tool_calls": tool_calls,
+    }
+
+
+if __name__ == "__main__":
+    # Quick test
+    print("Creating STaRK-Prime agent...")
+    agent = create_stark_prime_agent()
+
+    print("\nTesting with a sample question...")
+    question = "How many diseases are in the knowledge base?"
+    result = run_agent_query_sync(
+        agent,
+        question,
+        trace_name="test_query",
+        tags=["test", "stark-prime"],
+    )
+
+    print(f"\nQuestion: {question}")
+    print(f"\nAnswer: {result['answer']}")
+    print(f"\nTool calls: {len(result['tool_calls'])}")
+
+    # Flush Langfuse events (important for short-lived scripts)
+    flush_langfuse()
