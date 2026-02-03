@@ -1,5 +1,6 @@
 """SQL/SPARQL execution tool for STaRK-Prime agent."""
 
+import re
 from typing import Any
 
 from langchain.tools import tool
@@ -28,8 +29,7 @@ class QueryResult(BaseModel):
             return "Query returned 0 rows."
 
         lines = [
-            f"Query returned {self.row_count} row(s)"
-            f"{' (truncated)' if self.truncated else ''}:"
+            f"Query returned {self.row_count} row(s){' (truncated)' if self.truncated else ''}:"
         ]
         lines.append("")
 
@@ -113,11 +113,34 @@ def execute_sql_query(query: str) -> QueryResult:
         )
 
 
+def _normalize_sparql_query(query: str) -> str:
+    """Normalize common SPARQL prefix/IRI mistakes."""
+    cleaned = query.strip()
+    if "PREFIX sp:" in cleaned and "<http://stark.stanford.edu/prime/>" not in cleaned:
+        cleaned = cleaned.replace(
+            "PREFIX sp: http://stark.stanford.edu/prime/",
+            "PREFIX sp: <http://stark.stanford.edu/prime/>",
+        )
+
+    cleaned = re.sub(
+        r"<http://stark\.stanford\.edu/prime/node/>\s*([A-Za-z0-9_-]+)",
+        r"<http://stark.stanford.edu/prime/node/\1>",
+        cleaned,
+    )
+    cleaned = re.sub(
+        r"\bsp:node/([A-Za-z0-9_-]+)\b",
+        r"<http://stark.stanford.edu/prime/node/\1>",
+        cleaned,
+    )
+    return cleaned
+
+
 def execute_sparql_query(query: str) -> QueryResult:
     """Execute a SPARQL query against Fuseki."""
     try:
         store = get_sparql_store()
-        rows = store.execute_sparql(query)
+        normalized = _normalize_sparql_query(query)
+        rows = store.execute_sparql(normalized)
 
         truncated = len(rows) > MAX_QUERY_ROWS
         if truncated:
@@ -180,9 +203,45 @@ def execute_query_tool(language: str, query: str) -> str:
     return execute_query(language, query)
 
 
+@tool
+def execute_sql_query_tool(query: str) -> str:
+    """Execute a SQL query against the STaRK-Prime biomedical knowledge base.
+
+    Args:
+        query: The SQL query string to execute. Must be read-only (SELECT only).
+
+    Returns:
+        The query results formatted as a table, or an error message if the query failed.
+    """
+    return execute_query("sql", query)
+
+
+@tool
+def execute_sparql_query_tool(query: str) -> str:
+    """Execute a SPARQL query against the STaRK-Prime biomedical knowledge base.
+
+    Args:
+        query: The SPARQL query string to execute. Must be read-only.
+
+    Returns:
+        The query results formatted as a table, or an error message if the query failed.
+    """
+    return execute_query("sparql", query)
+
+
 def get_execute_query_tool():
     """Get the execute_query tool for use with create_agent."""
     return execute_query_tool
+
+
+def get_execute_sql_query_tool():
+    """Get the SQL-only execute_query tool for use with create_agent."""
+    return execute_sql_query_tool
+
+
+def get_execute_sparql_query_tool():
+    """Get the SPARQL-only execute_query tool for use with create_agent."""
+    return execute_sparql_query_tool
 
 
 def get_schema_and_vocab_summary() -> str:

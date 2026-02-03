@@ -10,62 +10,109 @@ from stark_prime_t2s.config import (
     FUSEKI_QUERY_URL,
     POSTGRES_URL,
     QDRANT_COLLECTION,
+    QDRANT_COLLECTION_FULL,
     QDRANT_HOST,
     QDRANT_PORT,
 )
-from stark_prime_t2s.data.download_prime import download_prime_skb
-from stark_prime_t2s.data.parse_prime_processed import PrimeDataLoader
+from stark_prime_t2s.dataset.download_prime import download_prime_skb
+from stark_prime_t2s.dataset.parse_prime_processed import PrimeDataLoader
 
 
-def _extract_rich_metadata(info: dict) -> dict:
-    """Extract rich metadata from node_info, including details from raw data.
-    
-    The STaRK-Prime dataset stores additional info in a 'details' sub-dict:
-    - details.name: Full name (e.g., "endothelin receptor type B" vs symbol "EDNRB")
-    - details.alias: List of synonyms/aliases
-    - details.summary: Description/summary text
+def _extract_rich_metadata(info: dict, node_type: str = "") -> dict:
+    """Extract rich metadata from node_info for embedding.
+
+    Embeds all non-empty descriptive fields from the details dictionary,
+    excluding technical ID fields that don't add semantic meaning.
     """
+    import math
+
     name = str(info.get("name", "") or "")
-    description = str(info.get("description", "") or "")
-    
+
     # Extract from details if available
     details = info.get("details", {}) or {}
-    
+
     # Handle full_name - can be string, list, or None
     raw_full_name = details.get("name", "")
     if isinstance(raw_full_name, list):
         full_name = ", ".join(str(x) for x in raw_full_name) if raw_full_name else ""
     else:
         full_name = str(raw_full_name or "")
-    
+
     aliases = details.get("alias", []) or []
-    
-    # Handle summary - can be string, list, or None
-    raw_summary = details.get("summary", "")
-    if isinstance(raw_summary, list):
-        summary = " ".join(str(x) for x in raw_summary) if raw_summary else ""
-    else:
-        summary = str(raw_summary or "")
-    
-    # Build rich description for embedding
+
+    # Build rich description from all descriptive fields in details
     rich_parts = []
-    
+
     # Add full name if different from short name
     if full_name and full_name.lower() != name.lower():
         rich_parts.append(full_name)
-    
+
     # Add aliases
     if aliases and isinstance(aliases, list):
         alias_str = ", ".join(str(a) for a in aliases[:10])  # Limit to 10 aliases
         if alias_str:
             rich_parts.append(f"Also known as: {alias_str}")
-    
-    # Add summary/description
-    if summary:
-        rich_parts.append(summary[:500])
-    elif description:
-        rich_parts.append(description[:500])
-    
+
+    # Fields to exclude (technical IDs that don't add semantic meaning)
+    exclude_fields = {
+        # ID fields
+        "_id",
+        "_score",
+        "query",
+        "mondo_id",
+        "dbId",
+        "stId",
+        "stIdVersion",
+        "group_id_bert",
+        # Boolean/technical flags
+        "hasDiagram",
+        "hasEHLD",
+        "hasEvent",
+        "isInDisease",
+        "isInferred",
+        # Empty/unused fields
+        "notfound",
+        "previousReviewStatus",
+        "releaseStatus",
+        "normalPathway",
+    }
+
+    # Add all descriptive fields from details (excluding IDs)
+    for key, value in details.items():
+        if key in exclude_fields:
+            continue
+
+        # Skip None
+        if value is None:
+            continue
+        # Skip float NaN
+        if isinstance(value, float) and math.isnan(value):
+            continue
+        # Skip string placeholders
+        if isinstance(value, str):
+            cleaned = value.strip().lower()
+            if cleaned in ("nan", "none", "", "null", "n/a"):
+                continue
+
+        # Format the value based on type
+        if isinstance(value, list):
+            if len(value) == 0:
+                continue
+            # For lists, join string representations
+            if all(isinstance(v, str) for v in value):
+                value_str = ", ".join(value)
+            else:
+                # For list of dicts/objects, try to extract meaningful text
+                value_str = _format_complex_value(value)
+        elif isinstance(value, dict):
+            value_str = _format_complex_value(value)
+        else:
+            value_str = str(value)
+
+        if value_str and len(value_str.strip()) > 0:
+            # Add with field name for context
+            rich_parts.append(f"{key}: {value_str}")
+
     return {
         "name": name,
         "full_name": full_name,
@@ -73,9 +120,45 @@ def _extract_rich_metadata(info: dict) -> dict:
     }
 
 
-def build_qdrant_index(loader: PrimeDataLoader, force: bool = False):
+def _format_complex_value(value) -> str:
+    """Format complex values (dicts, lists) into readable text."""
+    if isinstance(value, dict):
+        # For dicts, extract text fields or convert to readable format
+        if "displayName" in value:
+            return str(value["displayName"])
+        elif "name" in value:
+            return str(value["name"])
+        elif "title" in value:
+            return str(value["title"])
+        else:
+            # Convert to simple key: value format
+            parts = []
+            for k, v in value.items():
+                if isinstance(v, (str, int, float)):
+                    parts.append(f"{k}: {v}")
+            return ", ".join(parts) if parts else ""
+
+    elif isinstance(value, list):
+        # Recursively format list items
+        formatted = []
+        for item in value:
+            if isinstance(item, (str, int, float)):
+                formatted.append(str(item))
+            elif isinstance(item, dict):
+                formatted.append(_format_complex_value(item))
+        return ", ".join(formatted) if formatted else ""
+
+    else:
+        return str(value)
+
+
+def build_qdrant_index(
+    loader: PrimeDataLoader,
+    force: bool = False,
+    collection_name: str | None = None,
+):
     """Build the Qdrant vector index for entity search.
-    
+
     Extracts rich metadata (full names, aliases, summaries) from the STaRK-Prime
     node_info to enable better semantic search.
     """
@@ -86,21 +169,33 @@ def build_qdrant_index(loader: PrimeDataLoader, force: bool = False):
 
     print("Connecting to Qdrant...")
     client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
+    target_collection = collection_name or QDRANT_COLLECTION
 
-    # Check if collection exists and has data
+    # Check if collection exists and determine resume point
+    resume_from: int = 0
+    collection_exists = False
+
     try:
         collections = client.get_collections().collections
-        collection_exists = any(c.name == QDRANT_COLLECTION for c in collections)
+        collection_exists = any(c.name == target_collection for c in collections)
 
         if collection_exists:
-            info = client.get_collection(QDRANT_COLLECTION)
-            if info.points_count > 0 and not force:
-                print(f"  → Qdrant collection '{QDRANT_COLLECTION}' already has {info.points_count} entities")
-                print("  → Use --force to rebuild")
-                return
-            # Delete existing collection
-            print(f"  Deleting existing collection '{QDRANT_COLLECTION}'...")
-            client.delete_collection(QDRANT_COLLECTION)
+            info = client.get_collection(target_collection)
+            current_count = info.points_count or 0
+            if current_count > 0:
+                if not force:
+                    # Resume mode: start from where we left off
+                    resume_from = current_count
+                    print(
+                        f"  → Collection exists with {resume_from} entities, resuming from entity {resume_from}"
+                    )
+                else:
+                    # Force mode: delete and restart
+                    print(
+                        f"  Deleting existing collection '{target_collection}' ({current_count} entities)..."
+                    )
+                    client.delete_collection(target_collection)
+                    collection_exists = False
     except Exception as e:
         print(f"  Warning checking Qdrant: {e}")
 
@@ -108,15 +203,15 @@ def build_qdrant_index(loader: PrimeDataLoader, force: bool = False):
     print("  Loading entities with rich metadata...")
     entities: list[dict[str, object]] = []
     entities_with_rich_desc = 0
-    
+
     for node_id in range(loader.num_nodes):
         info = loader.node_info.get(node_id, {})
         node_type_id = int(loader.node_types[node_id].item())
         node_type = loader.node_type_dict.get(node_type_id, "unknown")
-        
+
         # Extract rich metadata
-        metadata = _extract_rich_metadata(info)
-        
+        metadata = _extract_rich_metadata(info, node_type)
+
         if metadata["description"]:
             entities_with_rich_desc += 1
 
@@ -129,71 +224,91 @@ def build_qdrant_index(loader: PrimeDataLoader, force: bool = False):
                 "description": metadata["description"],
             }
         )
-    
+
     print(f"  Found {entities_with_rich_desc}/{len(entities)} entities with rich descriptions")
 
-    print(f"  Creating embeddings for {len(entities)} entities...")
+    # Skip already processed entities if resuming
+    if resume_from > 0:
+        if resume_from >= len(entities):
+            print(f"  ✓ All {len(entities)} entities already indexed, nothing to do")
+            return
+        entities = entities[resume_from:]
+        print(f"  Resuming: will process {len(entities)} remaining entities")
+
+    # Get dimension by embedding a single test vector (if creating new collection)
+    print("  Getting embedding dimension...")
     embeddings = OpenAIEmbeddings(
         model="text-embedding-3-small",
         api_key=OPENAI_API_KEY,
     )
+    test_vector = embeddings.embed_query("test")
+    dimension = len(test_vector)
+    print(f"  Embedding dimension: {dimension}")
 
-    # Create search texts with rich metadata
-    texts: list[str] = []
-    for e in entities:
-        # Build comprehensive search text
-        parts = [f"{e['type']}: {e['name']}"]
-        if e["full_name"]:
-            parts.append(e["full_name"])
-        if e["description"]:
-            parts.append(str(e["description"]))
-        text = "\n".join(parts)
-        texts.append(text)
+    # Create collection if it doesn't exist
+    if not collection_exists:
+        print(f"  Creating collection...")
+        client.create_collection(
+            collection_name=target_collection,
+            vectors_config=VectorParams(
+                size=dimension,
+                distance=Distance.COSINE,
+            ),
+        )
+    else:
+        print(f"  Using existing collection...")
 
-    # Embed in batches
-    batch_size = 1000
-    all_vectors = []
-    for i in range(0, len(texts), batch_size):
-        batch = texts[i:i + batch_size]
-        vectors = embeddings.embed_documents(batch)
-        all_vectors.extend(vectors)
-        print(f"    Embedded {min(i + batch_size, len(texts))}/{len(texts)}")
+    # Process in batches: embed and upload incrementally
+    # Batch size reduced to 500 to stay under Qdrant's 32MB payload limit
+    # Each entity: ~6KB vector + ~1-2KB payload = ~7-8KB per entity
+    # 500 entities × 8KB = ~4MB per batch (well under 32MB limit)
+    batch_size = 500
+    total_uploaded = 0
+    print(f"  Embedding and uploading {len(entities)} entities in batches of {batch_size}...")
 
-    # Create collection
-    dimension = len(all_vectors[0])
-    print(f"  Creating collection with dimension {dimension}...")
-    client.create_collection(
-        collection_name=QDRANT_COLLECTION,
-        vectors_config=VectorParams(
-            size=dimension,
-            distance=Distance.COSINE,
-        ),
-    )
+    from tqdm import tqdm
 
-    # Upload in batches
-    print(f"  Uploading {len(entities)} vectors...")
-    for i in range(0, len(entities), batch_size):
-        batch_entities = entities[i:i + batch_size]
-        batch_vectors = all_vectors[i:i + batch_size]
+    # Create progress bar for total entities
+    with tqdm(total=len(entities), desc="  Uploading to Qdrant", unit="entities") as pbar:
+        for i in range(0, len(entities), batch_size):
+            batch_entities = entities[i : i + batch_size]
 
-        points = []
-        for j, (entity, vector) in enumerate(zip(batch_entities, batch_vectors)):
-            points.append(PointStruct(
-                id=i + j,
-                vector=vector,
-                payload={
-                    "entity_id": entity["id"],
-                    "type": entity["type"],
-                    "name": entity["name"],
-                    "full_name": entity.get("full_name", ""),
-                    "description": entity["description"],
-                },
-            ))
+            # Build texts for this batch
+            texts = []
+            for e in batch_entities:
+                parts = [f"{e['type']}: {e['name']}"]
+                if e["full_name"]:
+                    parts.append(e["full_name"])
+                if e["description"]:
+                    parts.append(str(e["description"]))
+                texts.append("\n".join(parts))
 
-        client.upsert(collection_name=QDRANT_COLLECTION, points=points)
-        print(f"    Uploaded {min(i + batch_size, len(entities))}/{len(entities)}")
+            # Embed this batch
+            vectors = embeddings.embed_documents(texts)
 
-    print(f"  ✓ Qdrant index built with {len(entities)} entities")
+            # Create points
+            points = []
+            for j, (entity, vector) in enumerate(zip(batch_entities, vectors)):
+                points.append(
+                    PointStruct(
+                        id=resume_from + i + j,
+                        vector=vector,
+                        payload={
+                            "entity_id": entity["id"],
+                            "type": entity["type"],
+                            "name": entity["name"],
+                            "full_name": entity.get("full_name", ""),
+                            "description": entity.get("description", ""),
+                        },
+                    )
+                )
+
+            # Upload immediately
+            client.upsert(collection_name=target_collection, points=points)
+            total_uploaded += len(points)
+            pbar.update(len(points))
+
+    print(f"  ✓ Qdrant index built with {total_uploaded} entities")
 
 
 def main():
@@ -221,6 +336,23 @@ def main():
         action="store_true",
         help="Skip building the Qdrant vector index",
     )
+    parser.add_argument(
+        "--qdrant-collection",
+        type=str,
+        default=None,
+        help=(
+            "Target Qdrant collection name for the entity index. "
+            "Defaults to QDRANT_COLLECTION or QDRANT_COLLECTION_FULL when --qdrant-full is set."
+        ),
+    )
+    parser.add_argument(
+        "--qdrant-full",
+        action="store_true",
+        help=(
+            "Build a full-description Qdrant index in QDRANT_COLLECTION_FULL. "
+            "Does not overwrite the default collection unless --qdrant-collection is set."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -232,6 +364,7 @@ def main():
     print(f"  PostgreSQL: {POSTGRES_URL.split('@')[1] if '@' in POSTGRES_URL else POSTGRES_URL}")
     print(f"  Fuseki: {FUSEKI_QUERY_URL}")
     print(f"  Qdrant: {QDRANT_HOST}:{QDRANT_PORT}/{QDRANT_COLLECTION}")
+    print(f"  Qdrant (full): {QDRANT_HOST}:{QDRANT_PORT}/{QDRANT_COLLECTION_FULL}")
     print()
 
     # Download data
@@ -290,7 +423,10 @@ def main():
         print("Step 5: Build Qdrant vector index")
         print("-" * 40)
         try:
-            build_qdrant_index(loader, force=args.force)
+            collection_name = args.qdrant_collection
+            if args.qdrant_full and not collection_name:
+                collection_name = QDRANT_COLLECTION_FULL
+            build_qdrant_index(loader, force=args.force, collection_name=collection_name)
         except Exception as e:
             print(f"  ERROR: Could not build Qdrant index: {e}")
             print("  Make sure Qdrant is running: docker-compose up -d qdrant")

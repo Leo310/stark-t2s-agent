@@ -1,17 +1,24 @@
-"""Benchmark runner for STaRK-Prime QA datasets using Langfuse Experiments SDK."""
+"""Benchmark runner for STaRK-Prime QA datasets using a custom Langfuse loop."""
 
 # pyright: reportMissingImports=false
 # pylint: disable=broad-exception-caught
 
 import argparse
-import re
+import concurrent.futures
+import random
 import sys
+import threading
 from typing import Any
 
-from langfuse import get_client, Evaluation
+from langfuse import get_client
+from tqdm import tqdm
+from tqdm import tqdm as _tqdm_module
 
 from stark_prime_t2s.agent.agent import (
     create_stark_prime_agent,
+    create_stark_prime_sparql_agent,
+    create_stark_prime_sql_agent,
+    get_langfuse_handler,
     run_agent_query_sync,
 )
 from stark_prime_t2s.config import (
@@ -23,57 +30,15 @@ from stark_prime_t2s.config import (
 )
 
 
-def extract_node_ids_from_answer(answer: str) -> list[int]:
-    """Extract node IDs from an agent's answer.
-
-    Args:
-        answer: The agent's answer text
-
-    Returns:
-        List of extracted node IDs
-    """
-    ids = []
-
-    # Look for explicit ID patterns
-    patterns = [
-        r"(?:node\s+)?(?:IDs?|ids?)[\s:]+\[?([0-9,\s]+)\]?",  # "IDs: 1, 2, 3"
-        r"(?:answer|result)[\s:]+\[?([0-9,\s]+)\]?",  # "Answer: 1, 2, 3"
-        r"\b([0-9]+(?:\s*,\s*[0-9]+)+)\b",  # Comma-separated numbers
-    ]
-
-    for pattern in patterns:
-        matches = re.findall(pattern, answer, re.IGNORECASE)
-        for match in matches:
-            try:
-                extracted = [int(x.strip()) for x in match.split(",") if x.strip().isdigit()]
-                ids.extend(extracted)
-            except ValueError:
-                continue
-
-    # Also look for standalone numbers in the last part of the answer
-    last_paragraph = answer.split("\n\n")[-1] if "\n\n" in answer else answer
-    standalone_numbers = re.findall(r"\b(\d+)\b", last_paragraph)
-    for num_str in standalone_numbers:
-        try:
-            num = int(num_str)
-            # Only include reasonable node IDs (not years, counts, etc.)
-            if 0 < num < 1000000 and num not in ids:
-                ids.append(num)
-        except ValueError:
-            continue
-
-    return ids
-
-
 def compute_metrics(predicted_ids: list[int], gold_ids: list[int]) -> dict[str, float]:
     """Compute evaluation metrics.
 
     Args:
-        predicted_ids: Predicted node IDs
+        predicted_ids: Predicted node IDs (order matters for ranking metrics)
         gold_ids: Gold standard node IDs
 
     Returns:
-        Dict with precision, recall, f1, and exact_match
+        Dict with precision, recall, f1, exact_match, hit@1, hit@5, and mrr
     """
     pred_set = set(predicted_ids)
     gold_set = set(gold_ids)
@@ -84,6 +49,9 @@ def compute_metrics(predicted_ids: list[int], gold_ids: list[int]) -> dict[str, 
             "recall": 1.0,
             "f1": 1.0 if not pred_set else 0.0,
             "exact_match": 1.0 if not pred_set else 0.0,
+            "hit@1": 1.0 if not pred_set else 0.0,
+            "hit@5": 1.0 if not pred_set else 0.0,
+            "mrr": 1.0 if not pred_set else 0.0,
         }
 
     if not pred_set:
@@ -92,6 +60,9 @@ def compute_metrics(predicted_ids: list[int], gold_ids: list[int]) -> dict[str, 
             "recall": 0.0,
             "f1": 0.0,
             "exact_match": 0.0,
+            "hit@1": 0.0,
+            "hit@5": 0.0,
+            "mrr": 0.0,
         }
 
     true_positives = len(pred_set & gold_set)
@@ -105,11 +76,34 @@ def compute_metrics(predicted_ids: list[int], gold_ids: list[int]) -> dict[str, 
 
     exact_match = 1.0 if pred_set == gold_set else 0.0
 
+    # Hit@K metrics: check if any gold ID appears in top K predictions
+    hit_at_1 = 0.0
+    hit_at_5 = 0.0
+    mrr = 0.0
+
+    # Check hit@1: is the first prediction correct?
+    if predicted_ids and predicted_ids[0] in gold_set:
+        hit_at_1 = 1.0
+
+    # Check hit@5: is any gold ID in the top 5 predictions?
+    top_5_preds = predicted_ids[:5]
+    if any(pred_id in gold_set for pred_id in top_5_preds):
+        hit_at_5 = 1.0
+
+    # Compute MRR: reciprocal of the rank of the first correct prediction
+    for rank, pred_id in enumerate(predicted_ids, start=1):
+        if pred_id in gold_set:
+            mrr = 1.0 / rank
+            break
+
     return {
         "precision": precision,
         "recall": recall,
         "f1": f1,
         "exact_match": exact_match,
+        "hit@1": hit_at_1,
+        "hit@5": hit_at_5,
+        "mrr": mrr,
     }
 
 
@@ -132,7 +126,7 @@ def _normalize_expected_output(expected_output: Any) -> list[int]:
     return []
 
 
-def stark_agent_task(*, item: Any, agent: Any, **kwargs) -> str:
+def stark_agent_task(*, item: Any, agent: Any, **kwargs) -> dict[str, Any]:
     """Task function that runs the STaRK-Prime agent on a question.
 
     Args:
@@ -140,125 +134,21 @@ def stark_agent_task(*, item: Any, agent: Any, **kwargs) -> str:
         agent: The STaRK-Prime agent instance
 
     Returns:
-        The agent's answer as a string
+        Dict with 'node_ids' and 'reasoning' keys
     """
     question = _get_item_field(item, "input", "")
 
-    try:
-        result = run_agent_query_sync(
-            agent,
-            question,
-            trace_name=f"benchmark_{_get_item_field(item, 'id', 'unknown')}",
-            tags=["benchmark", "stark-prime"],
-        )
-        return result.get("answer", "")
-    except Exception as e:
-        return f"ERROR: {e}"
-
-
-def precision_evaluator(*, input, output, expected_output, **kwargs) -> Evaluation:
-    """Evaluator for precision metric."""
-    predicted_ids = extract_node_ids_from_answer(output)
-    gold_ids = _normalize_expected_output(expected_output)
-    metrics = compute_metrics(predicted_ids, gold_ids)
-    return Evaluation(
-        name="precision",
-        value=metrics["precision"],
-        comment=f"Predicted: {predicted_ids}, Gold: {gold_ids}",
+    result = run_agent_query_sync(
+        agent,
+        question,
+        trace_name=f"benchmark_{_get_item_field(item, 'id', 'unknown')}",
+        tags=["benchmark", "stark-prime"],
     )
 
-
-def recall_evaluator(*, input, output, expected_output, **kwargs) -> Evaluation:
-    """Evaluator for recall metric."""
-    predicted_ids = extract_node_ids_from_answer(output)
-    gold_ids = _normalize_expected_output(expected_output)
-    metrics = compute_metrics(predicted_ids, gold_ids)
-    return Evaluation(
-        name="recall",
-        value=metrics["recall"],
-        comment=f"Predicted: {predicted_ids}, Gold: {gold_ids}",
-    )
-
-
-def f1_evaluator(*, input, output, expected_output, **kwargs) -> Evaluation:
-    """Evaluator for F1 metric."""
-    predicted_ids = extract_node_ids_from_answer(output)
-    gold_ids = _normalize_expected_output(expected_output)
-    metrics = compute_metrics(predicted_ids, gold_ids)
-    return Evaluation(
-        name="f1",
-        value=metrics["f1"],
-        comment=f"Predicted: {predicted_ids}, Gold: {gold_ids}",
-    )
-
-
-def exact_match_evaluator(*, input, output, expected_output, **kwargs) -> Evaluation:
-    """Evaluator for exact match metric."""
-    predicted_ids = extract_node_ids_from_answer(output)
-    gold_ids = _normalize_expected_output(expected_output)
-    metrics = compute_metrics(predicted_ids, gold_ids)
-    return Evaluation(
-        name="exact_match",
-        value=metrics["exact_match"],
-        comment=f"Predicted: {predicted_ids}, Gold: {gold_ids}",
-    )
-
-
-def avg_precision_evaluator(*, item_results, **kwargs) -> Evaluation:
-    """Run-level evaluator for average precision."""
-    precisions = [
-        eval.value
-        for result in item_results
-        for eval in result.evaluations
-        if eval.name == "precision"
-    ]
-    if not precisions:
-        return Evaluation(name="avg_precision", value=0.0)
-    avg = sum(precisions) / len(precisions)
-    return Evaluation(name="avg_precision", value=avg, comment=f"Average precision: {avg:.3f}")
-
-
-def avg_recall_evaluator(*, item_results, **kwargs) -> Evaluation:
-    """Run-level evaluator for average recall."""
-    recalls = [
-        eval.value
-        for result in item_results
-        for eval in result.evaluations
-        if eval.name == "recall"
-    ]
-    if not recalls:
-        return Evaluation(name="avg_recall", value=0.0)
-    avg = sum(recalls) / len(recalls)
-    return Evaluation(name="avg_recall", value=avg, comment=f"Average recall: {avg:.3f}")
-
-
-def avg_f1_evaluator(*, item_results, **kwargs) -> Evaluation:
-    """Run-level evaluator for average F1."""
-    f1s = [
-        eval.value for result in item_results for eval in result.evaluations if eval.name == "f1"
-    ]
-    if not f1s:
-        return Evaluation(name="avg_f1", value=0.0)
-    avg = sum(f1s) / len(f1s)
-    return Evaluation(name="avg_f1", value=avg, comment=f"Average F1: {avg:.3f}")
-
-
-def avg_exact_match_evaluator(*, item_results, **kwargs) -> Evaluation:
-    """Run-level evaluator for average exact match."""
-    ems = [
-        eval.value
-        for result in item_results
-        for eval in result.evaluations
-        if eval.name == "exact_match"
-    ]
-    if not ems:
-        return Evaluation(name="avg_exact_match", value=0.0)
-    avg = sum(ems) / len(ems)
-    return Evaluation(
-        name="avg_exact_match",
-        value=avg,
-        comment=f"Average exact match: {avg:.3f}",
-    )
+    return {
+        "node_ids": result["node_ids"],
+        "reasoning": result["reasoning"],
+    }
 
 
 def list_available_datasets(langfuse) -> list[str]:
@@ -326,8 +216,9 @@ def run_benchmark(
     model: str | None = None,
     concurrency: int = 1,
     verbose: bool = True,
+    agent_mode: str = "auto",
 ) -> Any:
-    """Run benchmark using Langfuse Experiments SDK.
+    """Run benchmark using a custom loop with Langfuse dataset runs.
 
     Args:
         dataset_name: Name of the Langfuse dataset to use. If None, prompts user.
@@ -374,11 +265,29 @@ def run_benchmark(
     # Create agent
     if verbose:
         print("\nInitializing STaRK-Prime agent...")
-    agent = create_stark_prime_agent(model=model)
 
-    # Define the task with the agent bound
-    def task(item, **kwargs):
-        return stark_agent_task(item=item, agent=agent, **kwargs)
+    agent_mode_normalized = agent_mode.strip().lower()
+
+    def agent_factory(build_index: bool):
+        if agent_mode_normalized == "sql":
+            return create_stark_prime_sql_agent(
+                model=model,
+                build_entity_index_on_start=build_index,
+            )
+        if agent_mode_normalized == "sparql":
+            return create_stark_prime_sparql_agent(
+                model=model,
+                build_entity_index_on_start=build_index,
+            )
+        return create_stark_prime_agent(
+            model=model,
+            build_entity_index_on_start=build_index,
+        )
+
+    agent = agent_factory(build_index=True)
+
+    # Initialize Langfuse tracing before progress bar output
+    _ = get_langfuse_handler()
 
     # Get dataset
     try:
@@ -389,43 +298,214 @@ def run_benchmark(
         print(f"Error: Could not load dataset '{dataset_name}': {e}")
         sys.exit(1)
 
-    # Run experiment
-    if verbose:
-        print("\nRunning experiment...")
+    if concurrency > 1 and verbose:
+        print(f"Running with thread concurrency: {concurrency}")
 
-    result = dataset.run_experiment(
-        name=f"STaRK-Prime Benchmark - {dataset_name}",
-        description=f"Benchmark run on {dataset_name} using {LLM_PROVIDER} model {actual_model}",
-        task=task,
-        evaluators=[
-            precision_evaluator,
-            recall_evaluator,
-            f1_evaluator,
-            exact_match_evaluator,
-        ],
-        run_evaluators=[
-            avg_precision_evaluator,
-            avg_recall_evaluator,
-            avg_f1_evaluator,
-            avg_exact_match_evaluator,
-        ],
-        max_concurrency=concurrency,
-        metadata={
-            "provider": LLM_PROVIDER,
-            "model": actual_model,
-            "dataset": dataset_name,
-            "concurrency": concurrency,
-        },
+    # Prompt for run name
+    default_run_name = f"STaRK-Prime Benchmark - {dataset_name}"
+    run_name = input(f"\nRun name [{default_run_name}]: ").strip() or default_run_name
+    run_description = f"Benchmark run on {dataset_name} using {LLM_PROVIDER} model {actual_model}"
+    run_metadata = {
+        "provider": LLM_PROVIDER,
+        "model": actual_model,
+        "dataset": dataset_name,
+        "concurrency": concurrency,
+    }
+
+    if verbose:
+        print("\nRunning benchmark loop...")
+
+    item_metrics: list[dict[str, float]] = []
+    failures: list[dict[str, str]] = []
+
+    items_all = list(dataset.items)
+    random.shuffle(items_all)
+
+    required_scores = {
+        "precision",
+        "recall",
+        "f1",
+        "exact_match",
+        "hit@1",
+        "hit@5",
+        "mrr",
+    }
+
+    def _fetch_existing_run_ids() -> tuple[set[str], set[str]]:
+        try:
+            run_with_items = langfuse.get_dataset_run(
+                dataset_name=dataset_name,
+                run_name=run_name,
+            )
+        except Exception as exc:
+            if "NotFound" in str(exc):
+                return set(), set()
+            if verbose:
+                print(f"Warning: Could not fetch dataset run: {exc}")
+            return set(), set()
+
+        completed: set[str] = set()
+        failed: set[str] = set()
+
+        for run_item in run_with_items.dataset_run_items:
+            item_id = str(run_item.dataset_item_id)
+            if item_id in completed:
+                continue
+            try:
+                trace = langfuse.api.trace.get(run_item.trace_id)
+                score_names = {getattr(score, "name", None) for score in trace.scores}
+                if required_scores.issubset(score_names):
+                    completed.add(item_id)
+                else:
+                    failed.add(item_id)
+            except Exception:
+                failed.add(item_id)
+
+        return completed, failed
+
+    completed_ids, failed_ids = _fetch_existing_run_ids()
+    if completed_ids or failed_ids:
+        if verbose:
+            missing = len(items_all) - len(completed_ids)
+            print(
+                "Resuming from Langfuse dataset run: "
+                f"completed {len(completed_ids)}, failed {len(failed_ids)}, missing {missing}"
+            )
+
+    items = [
+        item
+        for item in items_all
+        if str(_get_item_field(item, "id", "unknown")) not in completed_ids
+    ]
+    if not items and not failed_ids:
+        if verbose:
+            print("All dataset items already completed for this run name.")
+        return {
+            "run_name": run_name,
+            "metrics": {},
+            "items": 0,
+            "failures": [],
+        }
+    progress = tqdm(
+        items,
+        disable=not verbose,
+        desc="Benchmarking",
+        unit="item",
+        dynamic_ncols=True,
+        mininterval=0.5,
     )
+
+    thread_local = threading.local()
+    stop_event = threading.Event()
+
+    def _get_thread_agent():
+        agent_instance = getattr(thread_local, "agent", None)
+        if agent_instance is None:
+            agent_instance = agent_factory(build_index=False)
+            thread_local.agent = agent_instance
+        return agent_instance
+
+    def _process_item(item):
+        if stop_event.is_set():
+            raise RuntimeError("Benchmark interrupted")
+        item_id = _get_item_field(item, "id", "unknown")
+        question = _get_item_field(item, "input", "")
+        expected_output = _get_item_field(item, "expected_output", None)
+        gold_ids = _normalize_expected_output(expected_output)
+
+        with item.run(
+            run_name=run_name,
+            run_description=run_description,
+            run_metadata=run_metadata,
+        ) as root_span:
+            output = stark_agent_task(item=item, agent=_get_thread_agent())
+
+            root_span.update_trace(input=question, output=output)
+
+            metrics = compute_metrics(output["node_ids"], gold_ids)
+            for name, value in metrics.items():
+                root_span.score_trace(
+                    name=name,
+                    value=value,
+                    comment=f"Predicted: {output['node_ids']}, Gold: {gold_ids}",
+                )
+
+        return item_id, metrics
+
+    future_to_item: dict[concurrent.futures.Future, Any] | None = None
+
+    try:
+        if concurrency <= 1:
+            for item in progress:
+                try:
+                    _, metrics = _process_item(item)
+                    item_metrics.append(metrics)
+                except Exception as exc:
+                    item_id = _get_item_field(item, "id", "unknown")
+                    failures.append({"item_id": str(item_id), "error": str(exc)})
+                    if verbose:
+                        _tqdm_module.write(f"Warning: item {item_id} failed: {exc}")
+        else:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as executor:
+                future_to_item = {executor.submit(_process_item, item): item for item in items}
+                for future in concurrent.futures.as_completed(future_to_item):
+                    progress.update(1)
+                    try:
+                        _, metrics = future.result()
+                        item_metrics.append(metrics)
+                    except Exception as exc:
+                        item = future_to_item[future]
+                        item_id = _get_item_field(item, "id", "unknown")
+                        failures.append({"item_id": str(item_id), "error": str(exc)})
+                        if verbose:
+                            _tqdm_module.write(f"Warning: item {item_id} failed: {exc}")
+    except KeyboardInterrupt:
+        stop_event.set()
+        if verbose:
+            _tqdm_module.write("Benchmark interrupted. Cancelling pending tasks...")
+        if concurrency > 1 and future_to_item:
+            for future in list(future_to_item.keys()):
+                if not future.done():
+                    future.cancel()
+        raise
+
+    langfuse.flush()
+
+    def _avg(values: list[float]) -> float:
+        return sum(values) / len(values) if values else 0.0
+
+    avg_metrics = {
+        "avg_precision": _avg([m["precision"] for m in item_metrics]),
+        "avg_recall": _avg([m["recall"] for m in item_metrics]),
+        "avg_f1": _avg([m["f1"] for m in item_metrics]),
+        "avg_exact_match": _avg([m["exact_match"] for m in item_metrics]),
+        "avg_hit@1": _avg([m["hit@1"] for m in item_metrics]),
+        "avg_hit@5": _avg([m["hit@5"] for m in item_metrics]),
+        "avg_mrr": _avg([m["mrr"] for m in item_metrics]),
+    }
 
     if verbose:
         print("\n" + "=" * 60)
         print("Benchmark Complete!")
         print("=" * 60)
-        print(result.format())
+        print(f"Items processed: {len(item_metrics)}")
+        print(f"Failures: {len(failures)}")
+        for name, value in avg_metrics.items():
+            print(f"{name}: {value:.3f}")
+        if failures:
+            print("\nFailed items:")
+            for failure in failures[:10]:
+                print(f"  - {failure['item_id']}: {failure['error']}")
+            if len(failures) > 10:
+                print(f"  ... {len(failures) - 10} more")
         print("=" * 60)
 
-    return result
+    return {
+        "run_name": run_name,
+        "metrics": avg_metrics,
+        "items": len(item_metrics),
+        "failures": failures,
+    }
 
 
 def main():
@@ -457,6 +537,13 @@ def main():
         help="Suppress progress output",
     )
     parser.add_argument(
+        "--agent",
+        type=str,
+        default=None,
+        choices=["auto", "sql", "sparql"],
+        help="Agent mode: auto (SQL+SPARQL), sql-only, or sparql-only",
+    )
+    parser.add_argument(
         "--list-datasets",
         action="store_true",
         help="List available datasets and exit",
@@ -484,11 +571,21 @@ def main():
         sys.exit(0)
 
     try:
+        if args.agent:
+            agent_mode = args.agent
+        else:
+            prompt = "Select agent mode [auto/sql/sparql] (default: auto): "
+            choice = input(prompt).strip().lower()
+            agent_mode = choice or "auto"
+            if agent_mode not in ("auto", "sql", "sparql"):
+                print("Invalid selection. Using auto mode.")
+                agent_mode = "auto"
         run_benchmark(
             dataset_name=args.dataset,
             model=args.model,
             concurrency=max(1, args.concurrency),
             verbose=not args.quiet,
+            agent_mode=agent_mode,
         )
     except KeyboardInterrupt:
         print("\nBenchmark interrupted by user")

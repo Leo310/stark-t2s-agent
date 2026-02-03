@@ -115,6 +115,7 @@ FUSEKI_ADMIN_PASSWORD = os.getenv("FUSEKI_ADMIN_PASSWORD", "admin")
 QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
 QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6333"))
 QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "stark_entities")
+QDRANT_COLLECTION_FULL = os.getenv("QDRANT_COLLECTION_FULL", "stark_entities_full")
 
 # ---------------------------------------------------------------------------
 # Langfuse Observability (v3)

@@ -25,6 +25,8 @@ from stark_prime_t2s.tools.entity_resolver import (
 )
 from stark_prime_t2s.tools.execute_query import (
     get_execute_query_tool,
+    get_execute_sparql_query_tool,
+    get_execute_sql_query_tool,
     get_schema_and_vocab_summary,
 )
 
@@ -41,8 +43,8 @@ You have access to TWO tools:
    - Returns entity IDs that you can use in queries
 
 2. **execute_query_tool** - Execute SQL or SPARQL queries
-   - Use AFTER finding entity IDs with search_entities_tool
-   - Supports SQL (PostgreSQL) and SPARQL (Fuseki)
+    - Use AFTER finding entity IDs with search_entities_tool
+    - Supports SQL (PostgreSQL) and SPARQL (Fuseki)
 
 ## Two-Stage Query Process (IMPORTANT!)
 
@@ -103,18 +105,28 @@ Choose the appropriate query language based on the question:
 
 ## Answer Format
 
-After getting query results, provide:
-1. A brief explanation of what you found
-2. The final answer - typically a list of node IDs that match the question
+You MUST output ONLY a JSON object with exactly two fields. No markdown, no code blocks, no explanatory text before or after.
 
-For benchmark questions, the expected answer format is a comma-separated list of node IDs.
+CORRECT output:
+{{"ids": [123, 456, 789], "reasoning": "Found 3 genes associated with diabetes through indication relationships"}}
+
+INCORRECT outputs (DO NOT DO THESE):
+- ```json\n{{"ids": [123], "reasoning": "..."}}\n```
+- The answer is: {{"ids": [123], "reasoning": "..."}}
+- Based on my analysis... {{"ids": [123], "reasoning": "..."}}
+- "ids": [123], "reasoning": "..."
+
+**REQUIREMENTS:**
+- Output ONLY the raw JSON object starting with {{ and ending with }}
+- The `ids` field must be an array of integers, empty array [] if no results
+- The `reasoning` field must be a string explaining your process
+- IDs preserve ranking order for Hit@1 and MRR metrics
 
 ## CRITICAL: Efficiency Guidelines
 
 ### Parallelization
 - When resolving multiple entities, call ALL searches IN PARALLEL in ONE turn (max 4-5 searches)
 - Do NOT search for additional related proteins/genes after getting initial results
-- Use ONLY the first entity ID returned for each search (the most relevant match)
 
 ### Answer Strategy
 - If queries return 0 rows, report: "Based on entity resolution, I found X, Y, Z entities relevant to your question.
@@ -143,14 +155,24 @@ If you need to relate genes to a pathway concept, search for genes by name/funct
 The database uses a TYPED SCHEMA with one table per entity/relation type:
 
 - **Entity tables** (named directly after type): `disease`, `drug`, `gene_protein`, `pathway`, etc.
-  - Columns: id (INTEGER PK), name (TEXT), description (TEXT), raw_json (TEXT)
+  - Columns: id (INTEGER PK), name (TEXT), details (JSON), raw_json (JSON)
   
 - **Relation tables** (named directly after type): `associated_with`, `indication`, `side_effect`, `parent_child`, etc.
   - Columns: src_id (INTEGER), dst_id (INTEGER), src_type (TEXT), dst_type (TEXT)
 
 - **Unified views** for cross-type queries:
-  - `all_nodes`: combines all entity tables (id, type, name, description, raw_json)
+  - `all_nodes`: combines all entity tables (id, type, name, details, raw_json)
   - `all_edges`: combines all relation tables (src_id, dst_id, edge_type, src_type, dst_type)
+
+- **Details column**: JSON object with all non-empty type-specific attributes:
+  - Disease: mondo_definition, umls_description, orphanet_definition, mayo_symptoms, etc.
+  - Drug: description, mechanism_of_action, indication, pharmacodynamics, etc.
+  - Gene/Protein: summary, name (full), alias, genomic_pos, etc.
+  - Pathway: stId, displayName, summation, goBiologicalProcess, etc.
+
+- **Querying details**: Use JSON operators: `details::json->>'attribute_name'`
+  - Example: `SELECT name, details::json->>'mondo_definition' FROM disease WHERE id = 27158`
+  - Example: `SELECT * FROM drug WHERE details::json->>'mechanism_of_action' LIKE '%inhibitor%'`
 
 Example workflow:
 1. `search_entities_tool("breast cancer", "disease")` → ID: 789
@@ -167,6 +189,266 @@ Example workflow:
 Example workflow:
 1. `search_entities_tool("insulin", "gene_protein")` → ID: 456
 2. `execute_query_tool("sparql", "PREFIX sp: <http://stark.stanford.edu/prime/> SELECT ?related WHERE {{ sp:node/456 sp:associatedWith ?related }}")`
+
+Now answer the user's question using the two-stage approach.
+"""
+
+
+SQL_ONLY_SYSTEM_PROMPT_TEMPLATE = """You are an expert biomedical knowledge base analyst. Your task is to answer questions about diseases, drugs, genes/proteins, pathways, molecular functions, and their relationships using the STaRK-Prime knowledge base.
+
+## Available Tools
+
+You have access to TWO tools:
+
+1. **search_entities_tool** - Semantic search to find entities by name/description
+   - Use this FIRST to resolve entity names to their IDs
+   - Handles synonyms, partial matches, and related terms
+   - Returns entity IDs that you can use in queries
+
+2. **execute_sql_query_tool** - Execute SQL queries only
+   - Use AFTER finding entity IDs with search_entities_tool
+   - Supports SQL (PostgreSQL) only
+
+## Two-Stage Query Process (IMPORTANT!)
+
+**ALWAYS follow this two-stage approach:**
+
+### Stage 1: Entity Resolution
+When a question mentions specific entities (diseases, drugs, genes, etc.):
+1. Use `search_entities_tool` to find the entity IDs
+2. **Call multiple searches IN PARALLEL** when resolving multiple entities
+3. Note the returned IDs for use in your query
+
+Example: For "What genes are associated with both diabetes and hypertension?"
+→ First: Call BOTH searches in parallel:
+  - `search_entities_tool("diabetes", "disease")`
+  - `search_entities_tool("hypertension", "disease")`
+→ Get: diabetes ID 12345, hypertension ID 67890
+
+### Stage 2: Query Execution
+Use the resolved entity IDs in your SQL query:
+→ Then: `execute_sql_query_tool("SELECT ... WHERE ... 12345 ... 67890 ...")`
+
+## Query Language Selection
+
+You MUST use SQL only.
+
+## Knowledge Base Schema
+
+{schema_and_vocab}
+
+## Query Guidelines
+
+1. **Entity Resolution First**: ALWAYS use search_entities_tool to find entity IDs before querying.
+   Do NOT try to match entity names with SQL LIKE - use semantic search instead.
+
+2. **Read-only only**: Only SELECT queries are allowed. No INSERT, UPDATE, DELETE, etc.
+
+3. **Limit results**: Always use LIMIT {max_rows} unless the user specifically asks for more.
+
+4. **Be precise**: Use exact table/column names from the schema above.
+
+5. **Handle errors**: If a query fails, analyze the error and try a corrected query.
+
+6. **Node IDs are answers**: When the question asks "which" or "what", the answer is typically node IDs.
+   The benchmark expects node IDs (integers) as answers, not names.
+
+## Answer Format
+
+You MUST output ONLY a JSON object with exactly two fields. No markdown, no code blocks, no explanatory text before or after.
+
+CORRECT output:
+{{"ids": [123, 456, 789], "reasoning": "Found 3 genes associated with diabetes through indication relationships"}}
+
+INCORRECT outputs (DO NOT DO THESE):
+- ```json\n{{"ids": [123], "reasoning": "..."}}\n```
+- The answer is: {{"ids": [123], "reasoning": "..."}}
+- Based on my analysis... {{"ids": [123], "reasoning": "..."}}
+- "ids": [123], "reasoning": "..."
+
+**REQUIREMENTS:**
+- Output ONLY the raw JSON object starting with {{ and ending with }}
+- The `ids` field must be an array of integers, empty array [] if no results
+- The `reasoning` field must be a string explaining your process
+- IDs preserve ranking order for Hit@1 and MRR metrics
+
+## CRITICAL: Efficiency Guidelines
+
+### Parallelization
+- When resolving multiple entities, call ALL searches IN PARALLEL in ONE turn (max 4-5 searches)
+- Do NOT search for additional related proteins/genes after getting initial results
+
+### Answer Strategy
+- If queries return 0 rows, report: "Based on entity resolution, I found X, Y, Z entities relevant to your question.
+  However, the knowledge base does not contain direct relationships connecting all these criteria."
+- Partial results are valuable - report entity IDs even without relationship data
+
+## Data Model (IMPORTANT!)
+
+**Not all entity types are connected by edges!** The main relationship patterns are:
+- gene_protein ↔ disease (via associated_with, phenotype_present)
+- gene_protein ↔ gene_protein (via ppi - protein-protein interaction)
+- drug ↔ disease (via indication, contraindication, side_effect)
+- drug ↔ gene_protein (via target, enzyme, carrier, transporter)
+- gene_protein ↔ biological_process (via associated_with)
+- gene_protein ↔ anatomy (via expression_present)
+
+**There are NO direct edges between:**
+- gene_protein ↔ pathway (pathways are not connected to genes in this dataset!)
+- pathway ↔ disease
+- Most other cross-type combinations
+
+If you need to relate genes to a pathway concept, search for genes by name/function instead.
+
+## SQL Tips (Typed Schema)
+
+The database uses a TYPED SCHEMA with one table per entity/relation type:
+
+- **Entity tables** (named directly after type): `disease`, `drug`, `gene_protein`, `pathway`, etc.
+  - Columns: id (INTEGER PK), name (TEXT), details (JSON), raw_json (JSON)
+  
+- **Relation tables** (named directly after type): `associated_with`, `indication`, `side_effect`, `parent_child`, etc.
+  - Columns: src_id (INTEGER), dst_id (INTEGER), src_type (TEXT), dst_type (TEXT)
+
+- **Unified views** for cross-type queries:
+  - `all_nodes`: combines all entity tables (id, type, name, details, raw_json)
+  - `all_edges`: combines all relation tables (src_id, dst_id, edge_type, src_type, dst_type)
+
+- **Details column**: JSON object with all non-empty type-specific attributes:
+  - Disease: mondo_definition, umls_description, orphanet_definition, mayo_symptoms, etc.
+  - Drug: description, mechanism_of_action, indication, pharmacodynamics, etc.
+  - Gene/Protein: summary, name (full), alias, genomic_pos, etc.
+  - Pathway: stId, displayName, summation, goBiologicalProcess, etc.
+
+- **Querying details**: Use JSON operators: `details::json->>'attribute_name'`
+  - Example: `SELECT name, details::json->>'mondo_definition' FROM disease WHERE id = 27158`
+  - Example: `SELECT * FROM drug WHERE details::json->>'mechanism_of_action' LIKE '%inhibitor%'`
+
+Example workflow:
+1. `search_entities_tool("breast cancer", "disease")` → ID: 789
+2. `execute_sql_query_tool("SELECT dst_id FROM indication WHERE src_id = 789")`
+
+Now answer the user's question using the two-stage approach.
+"""
+
+
+SPARQL_ONLY_SYSTEM_PROMPT_TEMPLATE = """You are an expert biomedical knowledge base analyst. Your task is to answer questions about diseases, drugs, genes/proteins, pathways, molecular functions, and their relationships using the STaRK-Prime knowledge base.
+
+## Available Tools
+
+You have access to TWO tools:
+
+1. **search_entities_tool** - Semantic search to find entities by name/description
+   - Use this FIRST to resolve entity names to their IDs
+   - Handles synonyms, partial matches, and related terms
+   - Returns entity IDs that you can use in queries
+
+2. **execute_sparql_query_tool** - Execute SPARQL queries only
+   - Use AFTER finding entity IDs with search_entities_tool
+   - Supports SPARQL (Fuseki) only
+
+## Two-Stage Query Process (IMPORTANT!)
+
+**ALWAYS follow this two-stage approach:**
+
+### Stage 1: Entity Resolution
+When a question mentions specific entities (diseases, drugs, genes, etc.):
+1. Use `search_entities_tool` to find the entity IDs
+2. **Call multiple searches IN PARALLEL** when resolving multiple entities
+3. Note the returned IDs for use in your query
+
+Example: For "What genes are associated with both diabetes and hypertension?"
+→ First: Call BOTH searches in parallel:
+  - `search_entities_tool("diabetes", "disease")`
+  - `search_entities_tool("hypertension", "disease")`
+→ Get: diabetes ID 12345, hypertension ID 67890
+
+### Stage 2: Query Execution
+Use the resolved entity IDs in your SPARQL query:
+→ Then: `execute_sparql_query_tool("PREFIX sp: <http://stark.stanford.edu/prime/> SELECT ...")`
+
+## Query Language Selection
+
+You MUST use SPARQL only.
+
+## Knowledge Base Schema
+
+{schema_and_vocab}
+
+## Query Guidelines
+
+1. **Entity Resolution First**: ALWAYS use search_entities_tool to find entity IDs before querying.
+   Do NOT try to match entity names with SPARQL FILTER - use semantic search instead.
+
+2. **Read-only only**: Only SELECT, ASK, CONSTRUCT, DESCRIBE allowed. Do not use UPDATE/INSERT/DELETE.
+
+3. **Limit results**: Always use LIMIT {max_rows} unless the user specifically asks for more.
+
+4. **Be precise**: Use exact classes/properties from the vocabulary above.
+
+5. **Handle errors**: If a query fails, analyze the error and try a corrected query.
+
+6. **Node IDs are answers**: When the question asks "which" or "what", the answer is typically node IDs.
+   The benchmark expects node IDs (integers) as answers, not names.
+
+## Answer Format
+
+You MUST output ONLY a JSON object with exactly two fields. No markdown, no code blocks, no explanatory text before or after.
+
+CORRECT output:
+{{"ids": [123, 456, 789], "reasoning": "Found 3 genes associated with diabetes through indication relationships"}}
+
+INCORRECT outputs (DO NOT DO THESE):
+- ```json\n{{"ids": [123], "reasoning": "..."}}\n```
+- The answer is: {{"ids": [123], "reasoning": "..."}}
+- Based on my analysis... {{"ids": [123], "reasoning": "..."}}
+- "ids": [123], "reasoning": "..."
+
+**REQUIREMENTS:**
+- Output ONLY the raw JSON object starting with {{ and ending with }}
+- The `ids` field must be an array of integers, empty array [] if no results
+- The `reasoning` field must be a string explaining your process
+- IDs preserve ranking order for Hit@1 and MRR metrics
+
+## CRITICAL: Efficiency Guidelines
+
+### Parallelization
+- When resolving multiple entities, call ALL searches IN PARALLEL in ONE turn (max 4-5 searches)
+- Do NOT search for additional related proteins/genes after getting initial results
+
+### Answer Strategy
+- If queries return 0 rows, report: "Based on entity resolution, I found X, Y, Z entities relevant to your question.
+  However, the knowledge base does not contain direct relationships connecting all these criteria."
+- Partial results are valuable - report entity IDs even without relationship data
+
+## Data Model (IMPORTANT!)
+
+**Not all entity types are connected by edges!** The main relationship patterns are:
+- gene_protein ↔ disease (via associated_with, phenotype_present)
+- gene_protein ↔ gene_protein (via ppi - protein-protein interaction)
+- drug ↔ disease (via indication, contraindication, side_effect)
+- drug ↔ gene_protein (via target, enzyme, carrier, transporter)
+- gene_protein ↔ biological_process (via associated_with)
+- gene_protein ↔ anatomy (via expression_present)
+
+**There are NO direct edges between:**
+- gene_protein ↔ pathway (pathways are not connected to genes in this dataset!)
+- pathway ↔ disease
+- Most other cross-type combinations
+
+If you need to relate genes to a pathway concept, search for genes by name/function instead.
+
+## SPARQL Tips
+
+- Namespace prefix: sp: <http://stark.stanford.edu/prime/>
+- Node URIs: sp:node/<id>
+- Use sp:nodeId to get the integer node ID from a node URI
+- Classes: sp:Disease, sp:Drug, sp:GeneProtein, etc.
+- Properties: sp:associatedWith, sp:indication, sp:sideEffect, etc.
+
+Example workflow:
+1. `search_entities_tool("insulin", "gene_protein")` → ID: 456
+2. `execute_sparql_query_tool("PREFIX sp: <http://stark.stanford.edu/prime/> SELECT ?related WHERE {{ sp:node/456 sp:associatedWith ?related }} LIMIT 5")`
 
 Now answer the user's question using the two-stage approach.
 """
@@ -217,7 +499,7 @@ def _init_langfuse():
         )
 
         _langfuse_initialized = True
-        print(f"  ✓ Langfuse v3 tracing enabled ({LANGFUSE_BASE_URL})")
+        print(f"  ✓ Langfuse v3 tracing enabled ({LANGFUSE_BASE_URL})", flush=True)
         return True
 
     except ImportError:
@@ -254,6 +536,52 @@ def get_langfuse_handler():
             return None
 
     return _langfuse_handler
+
+
+def _parse_structured_output(answer: str) -> dict[str, Any]:
+    """Parse structured JSON output from the agent.
+
+    Args:
+        answer: The raw answer text from the agent
+
+    Returns:
+        Dict with 'ids' (list of ints) and 'reasoning' (str) keys
+
+    Raises:
+        ValueError: If the output is not valid JSON with required fields
+    """
+    import json
+    import re
+
+    cleaned = answer.strip()
+
+    # Remove markdown code block wrapper if present
+    if cleaned.startswith("```"):
+        # Extract content from ```json ... ``` or ``` ... ```
+        match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", cleaned, re.DOTALL)
+        if match:
+            cleaned = match.group(1)
+
+    parsed = json.loads(cleaned)
+    if not isinstance(parsed, dict):
+        raise ValueError(f"Expected JSON object, got {type(parsed).__name__}")
+
+    ids = parsed.get("ids")
+    reasoning = parsed.get("reasoning")
+
+    if ids is None or reasoning is None:
+        raise ValueError("JSON must contain 'ids' and 'reasoning' fields")
+
+    if not isinstance(ids, list):
+        raise ValueError(f"'ids' must be a list, got {type(ids).__name__}")
+
+    # Convert to integers
+    try:
+        ids = [int(x) for x in ids]
+    except (ValueError, TypeError) as e:
+        raise ValueError(f"All 'ids' must be integers: {e}")
+
+    return {"ids": ids, "reasoning": reasoning}
 
 
 def get_callbacks() -> list:
@@ -302,6 +630,24 @@ def get_system_prompt() -> str:
     """
     schema_and_vocab = get_schema_and_vocab_summary()
     return SYSTEM_PROMPT_TEMPLATE.format(
+        schema_and_vocab=schema_and_vocab,
+        max_rows=MAX_QUERY_ROWS,
+    )
+
+
+def get_sql_only_system_prompt() -> str:
+    """Generate the SQL-only system prompt with current schema/vocabulary."""
+    schema_and_vocab = get_schema_and_vocab_summary()
+    return SQL_ONLY_SYSTEM_PROMPT_TEMPLATE.format(
+        schema_and_vocab=schema_and_vocab,
+        max_rows=MAX_QUERY_ROWS,
+    )
+
+
+def get_sparql_only_system_prompt() -> str:
+    """Generate the SPARQL-only system prompt with current schema/vocabulary."""
+    schema_and_vocab = get_schema_and_vocab_summary()
+    return SPARQL_ONLY_SYSTEM_PROMPT_TEMPLATE.format(
         schema_and_vocab=schema_and_vocab,
         max_rows=MAX_QUERY_ROWS,
     )
@@ -367,6 +713,8 @@ def create_stark_prime_agent(
     }
     if base_url:
         init_kwargs["base_url"] = base_url
+    if "model_provider" not in kwargs:
+        init_kwargs["model_provider"] = "openai"
     init_kwargs.update(kwargs)
 
     llm = init_chat_model(
@@ -384,6 +732,130 @@ def create_stark_prime_agent(
     system_prompt = get_system_prompt()
 
     # Create the agent using LangChain v1's create_agent
+    agent = create_agent(
+        llm,
+        tools=[search_tool, query_tool],
+        system_prompt=system_prompt,
+    )
+
+    return agent
+
+
+def create_stark_prime_sql_agent(
+    model: str | None = None,
+    temperature: float = 0.0,
+    build_entity_index_on_start: bool = True,
+    **kwargs: Any,
+):
+    """Create a LangChain agent that can only execute SQL queries."""
+    provider = kwargs.pop("provider", None) or LLM_PROVIDER
+
+    if provider == "openrouter":
+        if not OPENROUTER_API_KEY:
+            raise ValueError(
+                "OPENROUTER_API_KEY not set. Please set it in your .env file or environment."
+            )
+        api_key = OPENROUTER_API_KEY
+        base_url = OPENROUTER_BASE_URL
+        model_name = model or OPENROUTER_MODEL
+    elif provider == "openai":
+        if not OPENAI_API_KEY:
+            raise ValueError(
+                "OPENAI_API_KEY not set. Please set it in your .env file or environment."
+            )
+        api_key = OPENAI_API_KEY
+        base_url = None
+        model_name = model or OPENAI_MODEL
+    else:
+        raise ValueError(f"Unknown LLM provider: {provider}. Use 'openai' or 'openrouter'.")
+
+    if build_entity_index_on_start:
+        print("Building entity index for semantic search...")
+        build_entity_index()
+
+    init_kwargs = {
+        "temperature": temperature,
+        "api_key": api_key,
+    }
+    if base_url:
+        init_kwargs["base_url"] = base_url
+    if "model_provider" not in kwargs:
+        init_kwargs["model_provider"] = "openai"
+    init_kwargs.update(kwargs)
+
+    llm = init_chat_model(
+        model_name,
+        **init_kwargs,
+    )
+
+    print(f"  Agent ready (provider: {provider}, model: {model_name})")
+
+    search_tool = get_search_entities_tool()
+    query_tool = get_execute_sql_query_tool()
+    system_prompt = get_sql_only_system_prompt()
+
+    agent = create_agent(
+        llm,
+        tools=[search_tool, query_tool],
+        system_prompt=system_prompt,
+    )
+
+    return agent
+
+
+def create_stark_prime_sparql_agent(
+    model: str | None = None,
+    temperature: float = 0.0,
+    build_entity_index_on_start: bool = True,
+    **kwargs: Any,
+):
+    """Create a LangChain agent that can only execute SPARQL queries."""
+    provider = kwargs.pop("provider", None) or LLM_PROVIDER
+
+    if provider == "openrouter":
+        if not OPENROUTER_API_KEY:
+            raise ValueError(
+                "OPENROUTER_API_KEY not set. Please set it in your .env file or environment."
+            )
+        api_key = OPENROUTER_API_KEY
+        base_url = OPENROUTER_BASE_URL
+        model_name = model or OPENROUTER_MODEL
+    elif provider == "openai":
+        if not OPENAI_API_KEY:
+            raise ValueError(
+                "OPENAI_API_KEY not set. Please set it in your .env file or environment."
+            )
+        api_key = OPENAI_API_KEY
+        base_url = None
+        model_name = model or OPENAI_MODEL
+    else:
+        raise ValueError(f"Unknown LLM provider: {provider}. Use 'openai' or 'openrouter'.")
+
+    if build_entity_index_on_start:
+        print("Building entity index for semantic search...")
+        build_entity_index()
+
+    init_kwargs = {
+        "temperature": temperature,
+        "api_key": api_key,
+    }
+    if base_url:
+        init_kwargs["base_url"] = base_url
+    if "model_provider" not in kwargs:
+        init_kwargs["model_provider"] = "openai"
+    init_kwargs.update(kwargs)
+
+    llm = init_chat_model(
+        model_name,
+        **init_kwargs,
+    )
+
+    print(f"  Agent ready (provider: {provider}, model: {model_name})")
+
+    search_tool = get_search_entities_tool()
+    query_tool = get_execute_sparql_query_tool()
+    system_prompt = get_sparql_only_system_prompt()
+
     agent = create_agent(
         llm,
         tools=[search_tool, query_tool],
@@ -417,7 +889,7 @@ async def run_agent_query(
         tags: Optional tags for Langfuse tracing
 
     Returns:
-        Dict with 'answer', 'messages', and 'tool_calls' keys
+        Dict with 'node_ids', 'reasoning', 'messages', and 'tool_calls' keys
     """
     # Build config with callbacks
     callbacks = get_callbacks()
@@ -442,38 +914,50 @@ async def run_agent_query(
     # Set recursion limit to prevent runaway loops
     config["recursion_limit"] = MAX_AGENT_ITERATIONS
 
-    # Invoke the agent
-    result = await agent.ainvoke(
-        {"messages": [{"role": "user", "content": question}]},
-        config=config,
-    )
+    def _extract_final_answer(result: dict[str, Any]) -> tuple[str, list, list]:
+        messages = result.get("messages", [])
+        final_answer = ""
+        tool_calls = []
 
-    # Extract relevant information
-    messages = result.get("messages", [])
+        for msg in messages:
+            if hasattr(msg, "content") and hasattr(msg, "type"):
+                if msg.type == "ai":
+                    final_answer = msg.content
+                elif msg.type == "tool":
+                    tool_calls.append(
+                        {
+                            "name": getattr(msg, "name", "unknown"),
+                            "content": (
+                                msg.content[:500] + "..." if len(msg.content) > 500 else msg.content
+                            ),
+                        }
+                    )
 
-    # Get the final assistant message
-    final_answer = ""
-    tool_calls = []
+        return final_answer, messages, tool_calls
 
-    for msg in messages:
-        if hasattr(msg, "content") and hasattr(msg, "type"):
-            if msg.type == "ai":
-                final_answer = msg.content
-            elif msg.type == "tool":
-                tool_calls.append(
-                    {
-                        "name": getattr(msg, "name", "unknown"),
-                        "content": (
-                            msg.content[:500] + "..." if len(msg.content) > 500 else msg.content
-                        ),
-                    }
-                )
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
+        result = await agent.ainvoke(
+            {"messages": [{"role": "user", "content": question}]},
+            config=config,
+        )
 
-    return {
-        "answer": final_answer,
-        "messages": messages,
-        "tool_calls": tool_calls,
-    }
+        final_answer, messages, tool_calls = _extract_final_answer(result)
+
+        try:
+            structured = _parse_structured_output(final_answer)
+            return {
+                "node_ids": structured["ids"],
+                "reasoning": structured["reasoning"],
+                "messages": messages,
+                "tool_calls": tool_calls,
+            }
+        except ValueError:
+            if attempt == max_attempts:
+                raise
+            continue
+
+    raise RuntimeError("Failed to parse agent output after retries")
 
 
 def run_agent_query_sync(
@@ -495,7 +979,7 @@ def run_agent_query_sync(
         tags: Optional tags for Langfuse tracing
 
     Returns:
-        Dict with 'answer', 'messages', and 'tool_calls' keys
+        Dict with 'node_ids', 'reasoning', 'messages', and 'tool_calls' keys
     """
     # Build config with callbacks
     callbacks = get_callbacks()
@@ -520,38 +1004,70 @@ def run_agent_query_sync(
     # Set recursion limit to prevent runaway loops
     config["recursion_limit"] = MAX_AGENT_ITERATIONS
 
-    # Invoke the agent synchronously
-    result = agent.invoke(
-        {"messages": [{"role": "user", "content": question}]},
-        config=config,
-    )
+    def _extract_final_answer(result: dict[str, Any]) -> tuple[str, list, list]:
+        messages = result.get("messages", [])
+        final_answer = ""
+        tool_calls = []
 
-    # Extract relevant information
-    messages = result.get("messages", [])
+        for msg in messages:
+            if hasattr(msg, "content") and hasattr(msg, "type"):
+                if msg.type == "ai":
+                    final_answer = msg.content
+                elif msg.type == "tool":
+                    tool_calls.append(
+                        {
+                            "name": getattr(msg, "name", "unknown"),
+                            "content": (
+                                msg.content[:500] + "..." if len(msg.content) > 500 else msg.content
+                            ),
+                        }
+                    )
 
-    # Get the final assistant message
-    final_answer = ""
-    tool_calls = []
+        return final_answer, messages, tool_calls
 
-    for msg in messages:
-        if hasattr(msg, "content") and hasattr(msg, "type"):
-            if msg.type == "ai":
-                final_answer = msg.content
-            elif msg.type == "tool":
-                tool_calls.append(
-                    {
-                        "name": getattr(msg, "name", "unknown"),
-                        "content": (
-                            msg.content[:500] + "..." if len(msg.content) > 500 else msg.content
-                        ),
-                    }
-                )
+    def _summarize_text(text: str | None, limit: int = 400) -> str:
+        if not text:
+            return "<empty>"
+        cleaned = text.replace("\n", " ").strip()
+        return cleaned if len(cleaned) <= limit else f"{cleaned[:limit]}..."
 
-    return {
-        "answer": final_answer,
-        "messages": messages,
-        "tool_calls": tool_calls,
-    }
+    def _summarize_messages(messages: list, limit: int = 3) -> list[str]:
+        summaries: list[str] = []
+        for msg in messages[-limit:]:
+            msg_type = getattr(msg, "type", "unknown")
+            content = getattr(msg, "content", None)
+            summaries.append(f"{msg_type}:{_summarize_text(content, 120)}")
+        return summaries
+
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
+        result = agent.invoke(
+            {"messages": [{"role": "user", "content": question}]},
+            config=config,
+        )
+
+        final_answer, messages, tool_calls = _extract_final_answer(result)
+
+        try:
+            structured = _parse_structured_output(final_answer)
+            return {
+                "node_ids": structured["ids"],
+                "reasoning": structured["reasoning"],
+                "messages": messages,
+                "tool_calls": tool_calls,
+            }
+        except ValueError as exc:
+            if attempt == max_attempts:
+                tool_names = [call.get("name", "unknown") for call in tool_calls][:3]
+                summary = _summarize_text(final_answer)
+                recent_messages = _summarize_messages(messages)
+                raise ValueError(
+                    "Failed to parse agent output. "
+                    f"final_answer={summary} tool_calls={tool_names} recent_messages={recent_messages} error={exc}"
+                ) from exc
+            continue
+
+    raise RuntimeError("Failed to parse agent output after retries")
 
 
 if __name__ == "__main__":
@@ -569,7 +1085,8 @@ if __name__ == "__main__":
     )
 
     print(f"\nQuestion: {question}")
-    print(f"\nAnswer: {result['answer']}")
+    print(f"\nNode IDs: {result['node_ids']}")
+    print(f"\nReasoning: {result['reasoning']}")
     print(f"\nTool calls: {len(result['tool_calls'])}")
 
     # Flush Langfuse events (important for short-lived scripts)

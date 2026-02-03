@@ -17,6 +17,7 @@ from qdrant_client.models import FieldCondition, Filter, MatchValue
 from stark_prime_t2s.config import (
     OPENAI_API_KEY,
     QDRANT_COLLECTION,
+    QDRANT_COLLECTION_FULL,
     QDRANT_HOST,
     QDRANT_PORT,
 )
@@ -28,19 +29,13 @@ class EntityInfo(BaseModel):
     id: int = Field(description="The unique node ID")
     type: str = Field(description="The entity type (e.g., 'disease', 'drug')")
     name: str = Field(description="The entity name")
-    description: str | None = Field(
-        default=None, description="Entity description if available"
-    )
+    description: str | None = Field(default=None, description="Entity description if available")
 
     def to_search_text(self) -> str:
         """Create text for embedding/search."""
         parts = [f"{self.type}: {self.name}"]
         if self.description:
-            desc = (
-                self.description[:500]
-                if len(self.description) > 500
-                else self.description
-            )
+            desc = self.description[:500] if len(self.description) > 500 else self.description
             parts.append(desc)
         return "\n".join(parts)
 
@@ -59,16 +54,9 @@ class EntitySearchResult(BaseModel):
         lines = [f"Found {len(self.entities)} entities matching '{self.query}':", ""]
 
         for i, entity in enumerate(self.entities, 1):
-            lines.append(
-                f"{i}. [{entity['type']}] {entity['name']} (ID: {entity['id']})"
-            )
+            lines.append(f"{i}. [{entity['type']}] {entity['name']} (ID: {entity['id']})")
             if entity.get("description"):
-                desc = (
-                    entity["description"][:200] + "..."
-                    if len(entity.get("description", "")) > 200
-                    else entity.get("description", "")
-                )
-                lines.append(f"   {desc}")
+                lines.append(f"   {entity.get('description', '')}")
             lines.append("")
 
         return "\n".join(lines)
@@ -132,6 +120,10 @@ def _normalize_entity_type(entity_type: str) -> str:
     return et
 
 
+def _get_collection_name(use_full: bool) -> str:
+    return QDRANT_COLLECTION_FULL if use_full else QDRANT_COLLECTION
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -149,9 +141,7 @@ def build_entity_index(_force_rebuild: bool = False) -> int:
     if _collection_exists():
         client = _get_qdrant_client()
         info = client.get_collection(QDRANT_COLLECTION)
-        print(
-            f"  ✓ Qdrant collection '{QDRANT_COLLECTION}' ready ({info.points_count} entities)"
-        )
+        print(f"  ✓ Qdrant collection '{QDRANT_COLLECTION}' ready ({info.points_count} entities)")
         return info.points_count
     else:
         print(f"  Warning: Qdrant collection '{QDRANT_COLLECTION}' not found or empty")
@@ -162,7 +152,8 @@ def build_entity_index(_force_rebuild: bool = False) -> int:
 def search_entities(
     query: str,
     entity_type: str | None = None,
-    top_k: int = 10,
+    top_k: int = 5,
+    use_full: bool = True,
 ) -> EntitySearchResult:
     """Search for entities matching a query.
 
@@ -196,7 +187,7 @@ def search_entities(
 
         # Search
         results = client.query_points(
-            collection_name=QDRANT_COLLECTION,
+            collection_name=_get_collection_name(use_full),
             query=query_vector,
             limit=top_k,
             query_filter=search_filter,
@@ -209,9 +200,7 @@ def search_entities(
             full_name = hit.payload.get("full_name", "")
             # Show full name in parentheses if different from short name
             display_name = (
-                f"{name} ({full_name})"
-                if full_name and full_name.lower() != name.lower()
-                else name
+                f"{name} ({full_name})" if full_name and full_name.lower() != name.lower() else name
             )
 
             entities.append(
@@ -236,7 +225,11 @@ def search_entities(
 
 
 @tool
-def search_entities_tool(query: str, entity_type: str | None = None) -> str:
+def search_entities_tool(
+    query: str,
+    entity_type: str | None = None,
+    use_full: bool = True,
+) -> str:
     """Search for entities in the STaRK-Prime knowledge base by name or description.
 
     Use this tool FIRST to find the correct entity IDs before writing SQL/SPARQL queries.
@@ -257,6 +250,8 @@ def search_entities_tool(query: str, entity_type: str | None = None) -> str:
                - "biological_process" - Biological processes
                - "exposure" - Environmental exposures
                Leave empty to search all entity types.
+        use_full: Use the full-description Qdrant index (default True). Set False
+                  to search the shorter/truncated index.
 
     Returns:
         A list of matching entities with their IDs, types, names, and descriptions.
@@ -269,7 +264,12 @@ def search_entities_tool(query: str, entity_type: str | None = None) -> str:
         Then use the ID in SQL:
         SELECT dst_id FROM indication WHERE src_id = <returned_id>
     """
-    result = search_entities(query, entity_type=entity_type, top_k=10)
+    result = search_entities(
+        query,
+        entity_type=entity_type,
+        top_k=5,
+        use_full=use_full,
+    )
     return result.to_string()
 
 

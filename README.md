@@ -90,10 +90,24 @@ This will:
 python scripts/demo_chat.py
 ```
 
+Select an agent mode when prompted, or pass it directly:
+
+```bash
+python scripts/demo_chat.py --agent sql
+python scripts/demo_chat.py --agent sparql
+```
+
 ### 4. Run benchmark
 
 ```bash
 python -m stark_prime_t2s.benchmark.run_prime --split synthesized --limit 10
+```
+
+To benchmark SQL-only or SPARQL-only agents:
+
+```bash
+python -m stark_prime_t2s.benchmark.run_prime --agent sql
+python -m stark_prime_t2s.benchmark.run_prime --agent sparql
 ```
 
 ## Project Structure

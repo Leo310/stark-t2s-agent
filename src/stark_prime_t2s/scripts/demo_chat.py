@@ -6,7 +6,12 @@ This module provides the entry point for the demo-chat CLI command.
 import argparse
 import sys
 
-from stark_prime_t2s.agent.agent import create_stark_prime_agent, run_agent_query_sync
+from stark_prime_t2s.agent.agent import (
+    create_stark_prime_agent,
+    create_stark_prime_sparql_agent,
+    create_stark_prime_sql_agent,
+    run_agent_query_sync,
+)
 from stark_prime_t2s.config import OPENAI_MODEL
 
 
@@ -105,6 +110,13 @@ def main():
         default=None,
         help=f"Model to use (default: {OPENAI_MODEL})",
     )
+    parser.add_argument(
+        "--agent",
+        type=str,
+        default=None,
+        choices=["auto", "sql", "sparql"],
+        help="Agent mode: auto (SQL+SPARQL), sql-only, or sparql-only",
+    )
 
     args = parser.parse_args()
 
@@ -114,10 +126,26 @@ def main():
 
     print(WELCOME_MESSAGE)
 
+    # Select agent mode
+    if args.agent:
+        agent_mode = args.agent
+    else:
+        prompt = "Select agent mode [auto/sql/sparql] (default: auto): "
+        choice = input(prompt).strip().lower()
+        agent_mode = choice or "auto"
+        if agent_mode not in ("auto", "sql", "sparql"):
+            print("Invalid selection. Using auto mode.")
+            agent_mode = "auto"
+
     # Create agent
     print("Initializing agent...")
     try:
-        agent = create_stark_prime_agent(model=args.model)
+        if agent_mode == "sql":
+            agent = create_stark_prime_sql_agent(model=args.model)
+        elif agent_mode == "sparql":
+            agent = create_stark_prime_sparql_agent(model=args.model)
+        else:
+            agent = create_stark_prime_agent(model=args.model)
     except Exception as e:
         print(f"ERROR: Failed to create agent: {e}")
         print()
@@ -153,7 +181,11 @@ def main():
         try:
             result = run_agent_query_sync(agent, question)
             print()
-            print(f"Agent: {result['answer']}")
+            # Display reasoning
+            print(f"Agent Reasoning: {result['reasoning']}")
+            print()
+            # Display the IDs (answer)
+            print(f"Agent Answer (IDs): {result['node_ids']}")
 
             # Show tool calls if any
             if result["tool_calls"]:
