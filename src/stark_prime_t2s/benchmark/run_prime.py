@@ -16,6 +16,7 @@ from tqdm import tqdm as _tqdm_module
 
 from stark_prime_t2s.agent.agent import (
     create_stark_prime_agent,
+    create_stark_prime_entity_resolver_agent,
     create_stark_prime_sparql_agent,
     create_stark_prime_sql_agent,
     get_langfuse_handler,
@@ -276,6 +277,11 @@ def run_benchmark(
             )
         if agent_mode_normalized == "sparql":
             return create_stark_prime_sparql_agent(
+                model=model,
+                build_entity_index_on_start=build_index,
+            )
+        if agent_mode_normalized == "entity":
+            return create_stark_prime_entity_resolver_agent(
                 model=model,
                 build_entity_index_on_start=build_index,
             )
@@ -540,8 +546,8 @@ def main():
         "--agent",
         type=str,
         default=None,
-        choices=["auto", "sql", "sparql"],
-        help="Agent mode: auto (SQL+SPARQL), sql-only, or sparql-only",
+        choices=["auto", "sql", "sparql", "entity"],
+        help="Agent mode: auto (SQL+SPARQL), sql-only, sparql-only, or entity-only",
     )
     parser.add_argument(
         "--list-datasets",
@@ -574,10 +580,10 @@ def main():
         if args.agent:
             agent_mode = args.agent
         else:
-            prompt = "Select agent mode [auto/sql/sparql] (default: auto): "
+            prompt = "Select agent mode [auto/sql/sparql/entity] (default: auto): "
             choice = input(prompt).strip().lower()
             agent_mode = choice or "auto"
-            if agent_mode not in ("auto", "sql", "sparql"):
+            if agent_mode not in ("auto", "sql", "sparql", "entity"):
                 print("Invalid selection. Using auto mode.")
                 agent_mode = "auto"
         run_benchmark(

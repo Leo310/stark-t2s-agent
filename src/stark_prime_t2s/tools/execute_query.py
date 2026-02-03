@@ -256,6 +256,27 @@ def get_schema_and_vocab_summary() -> str:
             parts.append("SQL DATABASE (PostgreSQL)")
             parts.append("=" * 60)
             parts.append(store.get_schema_summary())
+            try:
+                edge_rows = store.execute_read_only(
+                    """
+                    SELECT edge_type, src_type, dst_type, COUNT(*) AS cnt
+                    FROM all_edges
+                    GROUP BY edge_type, src_type, dst_type
+                    ORDER BY cnt DESC;
+                    """
+                )
+                if edge_rows:
+                    parts.append("")
+                    parts.append("EDGE TYPE SUMMARY (from all_edges):")
+                    for row in edge_rows:
+                        edge_type = row.get("edge_type")
+                        src_type = row.get("src_type")
+                        dst_type = row.get("dst_type")
+                        cnt = row.get("cnt")
+                        parts.append(f"  {edge_type}: {src_type} -> {dst_type} ({cnt:,} rows)")
+            except Exception as e:
+                parts.append("")
+                parts.append(f"[Edge summary unavailable: {e}]")
         else:
             parts.append("[PostgreSQL database not available or empty]")
     except Exception as e:

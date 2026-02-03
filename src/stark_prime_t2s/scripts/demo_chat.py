@@ -8,6 +8,7 @@ import sys
 
 from stark_prime_t2s.agent.agent import (
     create_stark_prime_agent,
+    create_stark_prime_entity_resolver_agent,
     create_stark_prime_sparql_agent,
     create_stark_prime_sql_agent,
     run_agent_query_sync,
@@ -114,8 +115,8 @@ def main():
         "--agent",
         type=str,
         default=None,
-        choices=["auto", "sql", "sparql"],
-        help="Agent mode: auto (SQL+SPARQL), sql-only, or sparql-only",
+        choices=["auto", "sql", "sparql", "entity"],
+        help="Agent mode: auto (SQL+SPARQL), sql-only, sparql-only, or entity-only",
     )
 
     args = parser.parse_args()
@@ -130,10 +131,10 @@ def main():
     if args.agent:
         agent_mode = args.agent
     else:
-        prompt = "Select agent mode [auto/sql/sparql] (default: auto): "
+        prompt = "Select agent mode [auto/sql/sparql/entity] (default: auto): "
         choice = input(prompt).strip().lower()
         agent_mode = choice or "auto"
-        if agent_mode not in ("auto", "sql", "sparql"):
+        if agent_mode not in ("auto", "sql", "sparql", "entity"):
             print("Invalid selection. Using auto mode.")
             agent_mode = "auto"
 
@@ -144,6 +145,8 @@ def main():
             agent = create_stark_prime_sql_agent(model=args.model)
         elif agent_mode == "sparql":
             agent = create_stark_prime_sparql_agent(model=args.model)
+        elif agent_mode == "entity":
+            agent = create_stark_prime_entity_resolver_agent(model=args.model)
         else:
             agent = create_stark_prime_agent(model=args.model)
     except Exception as e:

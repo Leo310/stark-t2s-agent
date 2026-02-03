@@ -63,8 +63,28 @@ Example: For "What genes are associated with both diabetes and hypertension?"
 → Get: diabetes ID 12345, hypertension ID 67890
 
 ### Stage 2: Query Execution  
-Use the resolved entity IDs in your SQL/SPARQL query:
-→ Then: `execute_query_tool("sql", "SELECT ... WHERE ... 12345 ... 67890 ...")`
+Use the resolved entity IDs in your SQL or SPARQL query:
+→ Then: `execute_query_tool("sql", "SELECT ...")` or `execute_query_tool("sparql", "PREFIX sp: ...")`
+
+## Exploration Strategy
+
+Adapt your approach based on the query structure:
+
+### Strategy 1: Queries without explicit entity mentions
+When the query does not explicitly mention specific entities (product names, paper titles, gene names, author names, etc.):
+1. Use `search_entities_tool` with the full question as the query and `top_k=15` to cast a wide net.
+2. Start broad, then narrow: begin with global searches, then focus on specific neighborhoods.
+
+### Strategy 2: Queries with explicit entity mentions
+When specific entities are mentioned:
+1. Resolve each entity with `search_entities_tool` (use `entity_type` when obvious).
+2. Proceed to query execution with the resolved IDs.
+
+### Strategy 3: Multi-entity or complex queries
+For queries involving multiple entities or combined criteria:
+1. Disambiguate all mentioned entities (parallel searches when possible).
+2. Explore neighborhoods of key entities with relevant filters.
+3. Combine information from multiple exploration paths.
 
 ## Query Language Selection
 
@@ -92,7 +112,7 @@ Choose the appropriate query language based on the question:
 1. **Entity Resolution First**: ALWAYS use search_entities_tool to find entity IDs before querying.
    Do NOT try to match entity names with SQL LIKE or SPARQL FILTER - use semantic search instead.
 
-2. **Read-only only**: Only SELECT queries are allowed. No INSERT, UPDATE, DELETE, etc.
+2. **Read-only only**: SQL must be SELECT-only; SPARQL must be read-only (SELECT, ASK, CONSTRUCT, DESCRIBE). No INSERT/UPDATE/DELETE.
 
 3. **Limit results**: Always use LIMIT {max_rows} unless the user specifically asks for more.
 
@@ -108,7 +128,7 @@ Choose the appropriate query language based on the question:
 You MUST output ONLY a JSON object with exactly two fields. No markdown, no code blocks, no explanatory text before or after.
 
 CORRECT output:
-{{"ids": [123, 456, 789], "reasoning": "Found 3 genes associated with diabetes through indication relationships"}}
+{"ids": [123, 456, 789], "reasoning": "Found 3 genes associated with diabetes through indication relationships"}
 
 INCORRECT outputs (DO NOT DO THESE):
 - ```json\n{{"ids": [123], "reasoning": "..."}}\n```
@@ -117,7 +137,7 @@ INCORRECT outputs (DO NOT DO THESE):
 - "ids": [123], "reasoning": "..."
 
 **REQUIREMENTS:**
-- Output ONLY the raw JSON object starting with {{ and ending with }}
+- Output ONLY the raw JSON object starting with { and ending with }
 - The `ids` field must be an array of integers, empty array [] if no results
 - The `reasoning` field must be a string explaining your process
 - IDs preserve ranking order for Hit@1 and MRR metrics
@@ -133,22 +153,10 @@ INCORRECT outputs (DO NOT DO THESE):
   However, the knowledge base does not contain direct relationships connecting all these criteria."
 - Partial results are valuable - report entity IDs even without relationship data
 
-## Data Model (IMPORTANT!)
+## Query Examples (SQL + SPARQL)
 
-**Not all entity types are connected by edges!** The main relationship patterns are:
-- gene_protein ↔ disease (via associated_with, phenotype_present)
-- gene_protein ↔ gene_protein (via ppi - protein-protein interaction)
-- drug ↔ disease (via indication, contraindication, side_effect)
-- drug ↔ gene_protein (via target, enzyme, carrier, transporter)
-- gene_protein ↔ biological_process (via associated_with)
-- gene_protein ↔ anatomy (via expression_present)
-
-**There are NO direct edges between:**
-- gene_protein ↔ pathway (pathways are not connected to genes in this dataset!)
-- pathway ↔ disease
-- Most other cross-type combinations
-
-If you need to relate genes to a pathway concept, search for genes by name/function instead.
+- SQL: `execute_query_tool("sql", "SELECT dst_id FROM indication WHERE src_id = 789")`
+- SPARQL: `execute_query_tool("sparql", "PREFIX sp: <http://stark.stanford.edu/prime/> SELECT ?related WHERE {{ <http://stark.stanford.edu/prime/node/456> sp:associatedWith ?related }} LIMIT 5")`
 
 ## SQL Tips (Typed Schema)
 
@@ -159,10 +167,6 @@ The database uses a TYPED SCHEMA with one table per entity/relation type:
   
 - **Relation tables** (named directly after type): `associated_with`, `indication`, `side_effect`, `parent_child`, etc.
   - Columns: src_id (INTEGER), dst_id (INTEGER), src_type (TEXT), dst_type (TEXT)
-
-- **Unified views** for cross-type queries:
-  - `all_nodes`: combines all entity tables (id, type, name, details, raw_json)
-  - `all_edges`: combines all relation tables (src_id, dst_id, edge_type, src_type, dst_type)
 
 - **Details column**: JSON object with all non-empty type-specific attributes:
   - Disease: mondo_definition, umls_description, orphanet_definition, mayo_symptoms, etc.
@@ -188,7 +192,7 @@ Example workflow:
 
 Example workflow:
 1. `search_entities_tool("insulin", "gene_protein")` → ID: 456
-2. `execute_query_tool("sparql", "PREFIX sp: <http://stark.stanford.edu/prime/> SELECT ?related WHERE {{ sp:node/456 sp:associatedWith ?related }}")`
+2. `execute_query_tool("sparql", "PREFIX sp: <http://stark.stanford.edu/prime/> SELECT ?related WHERE {{ <http://stark.stanford.edu/prime/node/456> sp:associatedWith ?related }} LIMIT 5")`
 
 Now answer the user's question using the two-stage approach.
 """
@@ -229,6 +233,26 @@ Example: For "What genes are associated with both diabetes and hypertension?"
 Use the resolved entity IDs in your SQL query:
 → Then: `execute_sql_query_tool("SELECT ... WHERE ... 12345 ... 67890 ...")`
 
+## Exploration Strategy
+
+Adapt your approach based on the query structure:
+
+### Strategy 1: Queries without explicit entity mentions
+When the query does not explicitly mention specific entities (product names, paper titles, gene names, author names, etc.):
+1. Use `search_entities_tool` with the full question as the query and `top_k=15` to cast a wide net.
+2. Start broad, then narrow: begin with global searches, then focus on specific neighborhoods.
+
+### Strategy 2: Queries with explicit entity mentions
+When specific entities are mentioned:
+1. Resolve each entity with `search_entities_tool` (use `entity_type` when obvious).
+2. Proceed to query execution with the resolved IDs.
+
+### Strategy 3: Multi-entity or complex queries
+For queries involving multiple entities or combined criteria:
+1. Disambiguate all mentioned entities (parallel searches when possible).
+2. Explore neighborhoods of key entities with relevant filters.
+3. Combine information from multiple exploration paths.
+
 ## Query Language Selection
 
 You MUST use SQL only.
@@ -258,7 +282,7 @@ You MUST use SQL only.
 You MUST output ONLY a JSON object with exactly two fields. No markdown, no code blocks, no explanatory text before or after.
 
 CORRECT output:
-{{"ids": [123, 456, 789], "reasoning": "Found 3 genes associated with diabetes through indication relationships"}}
+{"ids": [123, 456, 789], "reasoning": "Found 3 genes associated with diabetes through indication relationships"}
 
 INCORRECT outputs (DO NOT DO THESE):
 - ```json\n{{"ids": [123], "reasoning": "..."}}\n```
@@ -267,7 +291,7 @@ INCORRECT outputs (DO NOT DO THESE):
 - "ids": [123], "reasoning": "..."
 
 **REQUIREMENTS:**
-- Output ONLY the raw JSON object starting with {{ and ending with }}
+- Output ONLY the raw JSON object starting with { and ending with }
 - The `ids` field must be an array of integers, empty array [] if no results
 - The `reasoning` field must be a string explaining your process
 - IDs preserve ranking order for Hit@1 and MRR metrics
@@ -282,23 +306,6 @@ INCORRECT outputs (DO NOT DO THESE):
 - If queries return 0 rows, report: "Based on entity resolution, I found X, Y, Z entities relevant to your question.
   However, the knowledge base does not contain direct relationships connecting all these criteria."
 - Partial results are valuable - report entity IDs even without relationship data
-
-## Data Model (IMPORTANT!)
-
-**Not all entity types are connected by edges!** The main relationship patterns are:
-- gene_protein ↔ disease (via associated_with, phenotype_present)
-- gene_protein ↔ gene_protein (via ppi - protein-protein interaction)
-- drug ↔ disease (via indication, contraindication, side_effect)
-- drug ↔ gene_protein (via target, enzyme, carrier, transporter)
-- gene_protein ↔ biological_process (via associated_with)
-- gene_protein ↔ anatomy (via expression_present)
-
-**There are NO direct edges between:**
-- gene_protein ↔ pathway (pathways are not connected to genes in this dataset!)
-- pathway ↔ disease
-- Most other cross-type combinations
-
-If you need to relate genes to a pathway concept, search for genes by name/function instead.
 
 ## SQL Tips (Typed Schema)
 
@@ -367,6 +374,26 @@ Example: For "What genes are associated with both diabetes and hypertension?"
 Use the resolved entity IDs in your SPARQL query:
 → Then: `execute_sparql_query_tool("PREFIX sp: <http://stark.stanford.edu/prime/> SELECT ...")`
 
+## Exploration Strategy
+
+Adapt your approach based on the query structure:
+
+### Strategy 1: Queries without explicit entity mentions
+When the query does not explicitly mention specific entities (product names, paper titles, gene names, author names, etc.):
+1. Use `search_entities_tool` with the full question as the query and `top_k=15` to cast a wide net.
+2. Start broad, then narrow: begin with global searches, then focus on specific neighborhoods.
+
+### Strategy 2: Queries with explicit entity mentions
+When specific entities are mentioned:
+1. Resolve each entity with `search_entities_tool` (use `entity_type` when obvious).
+2. Proceed to query execution with the resolved IDs.
+
+### Strategy 3: Multi-entity or complex queries
+For queries involving multiple entities or combined criteria:
+1. Disambiguate all mentioned entities (parallel searches when possible).
+2. Explore neighborhoods of key entities with relevant filters.
+3. Combine information from multiple exploration paths.
+
 ## Query Language Selection
 
 You MUST use SPARQL only.
@@ -421,23 +448,6 @@ INCORRECT outputs (DO NOT DO THESE):
   However, the knowledge base does not contain direct relationships connecting all these criteria."
 - Partial results are valuable - report entity IDs even without relationship data
 
-## Data Model (IMPORTANT!)
-
-**Not all entity types are connected by edges!** The main relationship patterns are:
-- gene_protein ↔ disease (via associated_with, phenotype_present)
-- gene_protein ↔ gene_protein (via ppi - protein-protein interaction)
-- drug ↔ disease (via indication, contraindication, side_effect)
-- drug ↔ gene_protein (via target, enzyme, carrier, transporter)
-- gene_protein ↔ biological_process (via associated_with)
-- gene_protein ↔ anatomy (via expression_present)
-
-**There are NO direct edges between:**
-- gene_protein ↔ pathway (pathways are not connected to genes in this dataset!)
-- pathway ↔ disease
-- Most other cross-type combinations
-
-If you need to relate genes to a pathway concept, search for genes by name/function instead.
-
 ## SPARQL Tips
 
 - Namespace prefix: sp: <http://stark.stanford.edu/prime/>
@@ -451,6 +461,52 @@ Example workflow:
 2. `execute_sparql_query_tool("PREFIX sp: <http://stark.stanford.edu/prime/> SELECT ?related WHERE {{ sp:node/456 sp:associatedWith ?related }} LIMIT 5")`
 
 Now answer the user's question using the two-stage approach.
+"""
+
+
+ENTITY_ONLY_SYSTEM_PROMPT_TEMPLATE = """You are an expert biomedical knowledge base analyst. Your task is to resolve entity mentions to STaRK-Prime node IDs using semantic search.
+
+## Available Tools
+
+You have access to ONE tool:
+
+1. **search_entities_tool** - Semantic search to find entities by name/description
+   - Use this to resolve entity names to their IDs
+   - Handles synonyms, partial matches, and related terms
+
+## Entity Resolution Strategy (IMPORTANT!)
+
+### Strategy 1: Queries with explicit entity mentions
+When specific entities are mentioned:
+1. Resolve each entity with `search_entities_tool` (use `entity_type` when obvious)
+2. **Call multiple searches IN PARALLEL** when resolving multiple entities
+3. Collect the top results and return their IDs
+
+### Strategy 2: Queries without explicit entity mentions
+When the query does not explicitly mention specific entities:
+1. Use `search_entities_tool` with the full question as the query and `top_k=15`
+2. Return IDs from the best-matching results
+
+## Output Rules
+
+You MUST output ONLY a JSON object with exactly two fields. No markdown, no code blocks, no explanatory text before or after.
+
+CORRECT output:
+{"ids": [123, 456, 789], "reasoning": "Resolved entities using semantic search and returned the top matching IDs"}
+
+INCORRECT outputs (DO NOT DO THESE):
+- ```json\n{{"ids": [123], "reasoning": "..."}}\n```
+- The answer is: {{"ids": [123], "reasoning": "..."}}
+- Based on my analysis... {{"ids": [123], "reasoning": "..."}}
+- "ids": [123], "reasoning": "..."
+
+**REQUIREMENTS:**
+- Output ONLY the raw JSON object starting with { and ending with }
+- The `ids` field must be an array of integers, empty array [] if no results
+- The `reasoning` field must be a string explaining your process
+- IDs preserve ranking order for Hit@1 and MRR metrics
+
+Now answer the user's question using the entity resolution strategy.
 """
 
 
@@ -651,6 +707,11 @@ def get_sparql_only_system_prompt() -> str:
         schema_and_vocab=schema_and_vocab,
         max_rows=MAX_QUERY_ROWS,
     )
+
+
+def get_entity_only_system_prompt() -> str:
+    """Generate the entity-only system prompt."""
+    return ENTITY_ONLY_SYSTEM_PROMPT_TEMPLATE
 
 
 def create_stark_prime_agent(
@@ -859,6 +920,67 @@ def create_stark_prime_sparql_agent(
     agent = create_agent(
         llm,
         tools=[search_tool, query_tool],
+        system_prompt=system_prompt,
+    )
+
+    return agent
+
+
+def create_stark_prime_entity_resolver_agent(
+    model: str | None = None,
+    temperature: float = 0.0,
+    build_entity_index_on_start: bool = True,
+    **kwargs: Any,
+):
+    """Create a LangChain agent that can only resolve entities via semantic search."""
+    provider = kwargs.pop("provider", None) or LLM_PROVIDER
+
+    if provider == "openrouter":
+        if not OPENROUTER_API_KEY:
+            raise ValueError(
+                "OPENROUTER_API_KEY not set. Please set it in your .env file or environment."
+            )
+        api_key = OPENROUTER_API_KEY
+        base_url = OPENROUTER_BASE_URL
+        model_name = model or OPENROUTER_MODEL
+    elif provider == "openai":
+        if not OPENAI_API_KEY:
+            raise ValueError(
+                "OPENAI_API_KEY not set. Please set it in your .env file or environment."
+            )
+        api_key = OPENAI_API_KEY
+        base_url = None
+        model_name = model or OPENAI_MODEL
+    else:
+        raise ValueError(f"Unknown LLM provider: {provider}. Use 'openai' or 'openrouter'.")
+
+    if build_entity_index_on_start:
+        print("Building entity index for semantic search...")
+        build_entity_index()
+
+    init_kwargs = {
+        "temperature": temperature,
+        "api_key": api_key,
+    }
+    if base_url:
+        init_kwargs["base_url"] = base_url
+    if "model_provider" not in kwargs:
+        init_kwargs["model_provider"] = "openai"
+    init_kwargs.update(kwargs)
+
+    llm = init_chat_model(
+        model_name,
+        **init_kwargs,
+    )
+
+    print(f"  Agent ready (provider: {provider}, model: {model_name})")
+
+    search_tool = get_search_entities_tool()
+    system_prompt = get_entity_only_system_prompt()
+
+    agent = create_agent(
+        llm,
+        tools=[search_tool],
         system_prompt=system_prompt,
     )
 

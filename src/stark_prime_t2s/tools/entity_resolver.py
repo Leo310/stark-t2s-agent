@@ -228,6 +228,7 @@ def search_entities(
 def search_entities_tool(
     query: str,
     entity_type: str | None = None,
+    top_k: int = 5,
     use_full: bool = True,
 ) -> str:
     """Search for entities in the STaRK-Prime knowledge base by name or description.
@@ -252,6 +253,7 @@ def search_entities_tool(
                Leave empty to search all entity types.
         use_full: Use the full-description Qdrant index (default True). Set False
                   to search the shorter/truncated index.
+        top_k: Maximum number of results to return (default 5).
 
     Returns:
         A list of matching entities with their IDs, types, names, and descriptions.
@@ -267,7 +269,7 @@ def search_entities_tool(
     result = search_entities(
         query,
         entity_type=entity_type,
-        top_k=5,
+        top_k=top_k,
         use_full=use_full,
     )
     return result.to_string()
