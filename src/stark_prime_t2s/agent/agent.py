@@ -28,6 +28,8 @@ from stark_prime_t2s.tools.execute_query import (
     get_execute_sparql_query_tool,
     get_execute_sql_query_tool,
     get_schema_and_vocab_summary,
+    get_sparql_vocab_summary,
+    get_sql_schema_summary,
 )
 
 
@@ -155,42 +157,11 @@ INCORRECT outputs (DO NOT DO THESE):
 
 ## Query Examples (SQL + SPARQL)
 
-- SQL: `execute_query_tool("sql", "SELECT dst_id FROM indication WHERE src_id = 789")`
-- SPARQL: `execute_query_tool("sparql", "PREFIX sp: <http://stark.stanford.edu/prime/> SELECT ?related WHERE {{ <http://stark.stanford.edu/prime/node/456> sp:associatedWith ?related }} LIMIT 5")`
-
-## SQL Tips (Typed Schema)
-
-The database uses a TYPED SCHEMA with one table per entity/relation type:
-
-- **Entity tables** (named directly after type): `disease`, `drug`, `gene_protein`, `pathway`, etc.
-  - Columns: id (INTEGER PK), name (TEXT), details (JSON), raw_json (JSON)
-  
-- **Relation tables** (named directly after type): `associated_with`, `indication`, `side_effect`, `parent_child`, etc.
-  - Columns: src_id (INTEGER), dst_id (INTEGER), src_type (TEXT), dst_type (TEXT)
-
-- **Details column**: JSON object with all non-empty type-specific attributes:
-  - Disease: mondo_definition, umls_description, orphanet_definition, mayo_symptoms, etc.
-  - Drug: description, mechanism_of_action, indication, pharmacodynamics, etc.
-  - Gene/Protein: summary, name (full), alias, genomic_pos, etc.
-  - Pathway: stId, displayName, summation, goBiologicalProcess, etc.
-
-- **Querying details**: Use JSON operators: `details::json->>'attribute_name'`
-  - Example: `SELECT name, details::json->>'mondo_definition' FROM disease WHERE id = 27158`
-  - Example: `SELECT * FROM drug WHERE details::json->>'mechanism_of_action' LIKE '%inhibitor%'`
-
-Example workflow:
+Example SQL workflow:
 1. `search_entities_tool("breast cancer", "disease")` → ID: 789
 2. `execute_query_tool("sql", "SELECT dst_id FROM indication WHERE src_id = 789")`
 
-## SPARQL Tips
-
-- Namespace prefix: sp: <http://stark.stanford.edu/prime/>
-- Node URIs: sp:node/<id>
-- Use sp:nodeId to get the integer node ID from a node URI
-- Classes: sp:Disease, sp:Drug, sp:GeneProtein, etc.
-- Properties: sp:associatedWith, sp:indication, sp:sideEffect, etc.
-
-Example workflow:
+Example SPARQL workflow:
 1. `search_entities_tool("insulin", "gene_protein")` → ID: 456
 2. `execute_query_tool("sparql", "PREFIX sp: <http://stark.stanford.edu/prime/> SELECT ?related WHERE {{ <http://stark.stanford.edu/prime/node/456> sp:associatedWith ?related }} LIMIT 5")`
 
@@ -306,30 +277,6 @@ INCORRECT outputs (DO NOT DO THESE):
 - If queries return 0 rows, report: "Based on entity resolution, I found X, Y, Z entities relevant to your question.
   However, the knowledge base does not contain direct relationships connecting all these criteria."
 - Partial results are valuable - report entity IDs even without relationship data
-
-## SQL Tips (Typed Schema)
-
-The database uses a TYPED SCHEMA with one table per entity/relation type:
-
-- **Entity tables** (named directly after type): `disease`, `drug`, `gene_protein`, `pathway`, etc.
-  - Columns: id (INTEGER PK), name (TEXT), details (JSON), raw_json (JSON)
-  
-- **Relation tables** (named directly after type): `associated_with`, `indication`, `side_effect`, `parent_child`, etc.
-  - Columns: src_id (INTEGER), dst_id (INTEGER), src_type (TEXT), dst_type (TEXT)
-
-- **Unified views** for cross-type queries:
-  - `all_nodes`: combines all entity tables (id, type, name, details, raw_json)
-  - `all_edges`: combines all relation tables (src_id, dst_id, edge_type, src_type, dst_type)
-
-- **Details column**: JSON object with all non-empty type-specific attributes:
-  - Disease: mondo_definition, umls_description, orphanet_definition, mayo_symptoms, etc.
-  - Drug: description, mechanism_of_action, indication, pharmacodynamics, etc.
-  - Gene/Protein: summary, name (full), alias, genomic_pos, etc.
-  - Pathway: stId, displayName, summation, goBiologicalProcess, etc.
-
-- **Querying details**: Use JSON operators: `details::json->>'attribute_name'`
-  - Example: `SELECT name, details::json->>'mondo_definition' FROM disease WHERE id = 27158`
-  - Example: `SELECT * FROM drug WHERE details::json->>'mechanism_of_action' LIKE '%inhibitor%'`
 
 Example workflow:
 1. `search_entities_tool("breast cancer", "disease")` → ID: 789
@@ -448,15 +395,7 @@ INCORRECT outputs (DO NOT DO THESE):
   However, the knowledge base does not contain direct relationships connecting all these criteria."
 - Partial results are valuable - report entity IDs even without relationship data
 
-## SPARQL Tips
-
-- Namespace prefix: sp: <http://stark.stanford.edu/prime/>
-- Node URIs: sp:node/<id>
-- Use sp:nodeId to get the integer node ID from a node URI
-- Classes: sp:Disease, sp:Drug, sp:GeneProtein, etc.
-- Properties: sp:associatedWith, sp:indication, sp:sideEffect, etc.
-
-Example workflow:
+Example SPARQL workflow:
 1. `search_entities_tool("insulin", "gene_protein")` → ID: 456
 2. `execute_sparql_query_tool("PREFIX sp: <http://stark.stanford.edu/prime/> SELECT ?related WHERE {{ sp:node/456 sp:associatedWith ?related }} LIMIT 5")`
 
@@ -693,7 +632,7 @@ def get_system_prompt() -> str:
 
 def get_sql_only_system_prompt() -> str:
     """Generate the SQL-only system prompt with current schema/vocabulary."""
-    schema_and_vocab = get_schema_and_vocab_summary()
+    schema_and_vocab = get_sql_schema_summary()
     return SQL_ONLY_SYSTEM_PROMPT_TEMPLATE.format(
         schema_and_vocab=schema_and_vocab,
         max_rows=MAX_QUERY_ROWS,
@@ -702,7 +641,7 @@ def get_sql_only_system_prompt() -> str:
 
 def get_sparql_only_system_prompt() -> str:
     """Generate the SPARQL-only system prompt with current schema/vocabulary."""
-    schema_and_vocab = get_schema_and_vocab_summary()
+    schema_and_vocab = get_sparql_vocab_summary()
     return SPARQL_ONLY_SYSTEM_PROMPT_TEMPLATE.format(
         schema_and_vocab=schema_and_vocab,
         max_rows=MAX_QUERY_ROWS,

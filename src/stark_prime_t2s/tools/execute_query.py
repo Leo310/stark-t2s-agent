@@ -244,11 +244,10 @@ def get_execute_sparql_query_tool():
     return execute_sparql_query_tool
 
 
-def get_schema_and_vocab_summary() -> str:
-    """Get a combined summary of the SQL schema and RDF vocabulary."""
+def get_sql_schema_summary() -> str:
+    """Get a summary of the SQL schema only."""
     parts = []
 
-    # PostgreSQL
     try:
         store = get_sql_store()
         if store.is_available():
@@ -282,9 +281,13 @@ def get_schema_and_vocab_summary() -> str:
     except Exception as e:
         parts.append(f"[PostgreSQL unavailable: {e}]")
 
-    parts.append("")
+    return "\n".join(parts)
 
-    # Fuseki
+
+def get_sparql_vocab_summary() -> str:
+    """Get a summary of the SPARQL vocabulary only."""
+    parts = []
+
     try:
         store = get_sparql_store()
         if store.is_available():
@@ -297,6 +300,12 @@ def get_schema_and_vocab_summary() -> str:
     except Exception as e:
         parts.append(f"[Fuseki unavailable: {e}]")
 
+    return "\n".join(parts)
+
+
+def get_schema_and_vocab_summary() -> str:
+    """Get a combined summary of the SQL schema and RDF vocabulary."""
+    parts = [get_sql_schema_summary(), "", get_sparql_vocab_summary()]
     return "\n".join(parts)
 
 
