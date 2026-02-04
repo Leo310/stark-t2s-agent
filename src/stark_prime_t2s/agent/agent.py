@@ -151,6 +151,8 @@ INCORRECT outputs (DO NOT DO THESE):
 - Query errors: max 2 corrective attempts per query
 - Zero-row results: max 2 query reformulations (broaden filters, try alternative relationships)
 - After limits exhausted, report partial results or fallback message
+- Hard cap: 6 tool rounds total. Parallel tool calls count as 1 round.
+  If reached, stop and answer with best available IDs
 
 ### Answer Strategy
 - If a query returns 0 rows, adjust and retry (within retry limits above)
@@ -277,6 +279,8 @@ INCORRECT outputs (DO NOT DO THESE):
 - Query errors: max 2 corrective attempts per query
 - Zero-row results: max 2 query reformulations (broaden filters, try alternative relationships)
 - After limits exhausted, report partial results or fallback message
+- Hard cap: 6 tool rounds total. Parallel tool calls count as 1 round.
+  If reached, stop and answer with best available IDs
 
 ### Answer Strategy
 - If a query returns 0 rows, adjust and retry (within retry limits above)
@@ -397,6 +401,8 @@ INCORRECT outputs (DO NOT DO THESE):
 - Query errors: max 2 corrective attempts per query
 - Zero-row results: max 2 query reformulations (broaden filters, try alternative relationships)
 - After limits exhausted, report partial results or fallback message
+- Hard cap: 6 tool rounds total. Parallel tool calls count as 1 round.
+  If reached, stop and answer with best available IDs
 
 ### Answer Strategy
 - If a query returns 0 rows, adjust and retry (within retry limits above)
@@ -457,6 +463,10 @@ INCORRECT outputs (DO NOT DO THESE):
 
 ### Parallelization
 - When resolving multiple entities, call ALL searches IN PARALLEL in ONE turn (max 4-5 searches)
+
+### Stop Condition
+- Hard cap: 4 search rounds total. Parallel searches count as 1 round.
+  If reached, stop and answer with best available IDs
 
 Now answer the user's question using the entity resolution strategy.
 """

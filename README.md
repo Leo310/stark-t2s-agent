@@ -47,7 +47,7 @@ LLM_PROVIDER=openai
 
 # For OpenAI (default)
 OPENAI_API_KEY=your-openai-api-key
-OPENAI_MODEL=gpt-4o-mini
+OPENAI_MODEL=gpt-5-mini
 
 # For OpenRouter (alternative)
 # OPENROUTER_API_KEY=your-openrouter-api-key
@@ -68,13 +68,13 @@ docker-compose up -d
 
 This starts:
 - **PostgreSQL** on port 5432 (for SQL queries)
-- **Apache Jena Fuseki** on port 3030 (for SPARQL queries)
+- **Apache Jena Fuseki** on port 3031 (for SPARQL queries)
 - **Qdrant** on port 6333 (for entity resolution)
 
 ### 2. Build all data stores
 
 ```bash
-python scripts/build_prime_stores.py
+build-prime-stores
 ```
 
 This will:
@@ -87,44 +87,58 @@ This will:
 ### 3. Interactive demo
 
 ```bash
-python scripts/demo_chat.py
+demo-chat
 ```
 
 Select an agent mode when prompted, or pass it directly:
 
 ```bash
-python scripts/demo_chat.py --agent sql
-python scripts/demo_chat.py --agent sparql
+demo-chat --agent sql
+demo-chat --agent sparql
 ```
 
 ### 4. Run benchmark
 
+The benchmark runner uses Langfuse datasets. Make sure these are set in `.env`:
+
+```env
+LANGFUSE_SECRET_KEY=sk-lf-...
+LANGFUSE_PUBLIC_KEY=pk-lf-...
+```
+
+List available datasets:
+
 ```bash
-python -m stark_prime_t2s.benchmark.run_prime --split synthesized --limit 10
+run-benchmark --list-datasets
+```
+
+Run a benchmark (will prompt for dataset if not provided):
+
+```bash
+run-benchmark --dataset stark_prime_synth --concurrency 2
 ```
 
 To benchmark SQL-only or SPARQL-only agents:
 
 ```bash
-python -m stark_prime_t2s.benchmark.run_prime --agent sql
-python -m stark_prime_t2s.benchmark.run_prime --agent sparql
+run-benchmark --agent sql
+run-benchmark --agent sparql
 ```
 
 ## Project Structure
 
 ```
 stark-t2s-agent/
-├── docker-compose.yml            # PostgreSQL + Fuseki containers
+├── docker-compose.yml            # PostgreSQL, Fuseki, Qdrant services
 ├── pyproject.toml
 ├── README.md
 ├── .env                          # API keys and config (create this)
-├── docker-compose.yml            # PostgreSQL, Fuseki, Qdrant services
 ├── scripts/
-│   ├── build_prime_stores.py     # Build all data stores
-│   └── demo_chat.py              # Interactive chat demo
+│   ├── build_prime_stores.py     # Wrapper for build-prime-stores CLI
+│   └── demo_chat.py              # Wrapper for demo-chat CLI
 └── src/stark_prime_t2s/
-    ├── config.py                 # Docker services config
-    ├── data/
+    ├── config.py                 # Docker services + env config
+    ├── dataset/
     │   ├── download_prime.py     # Download STaRK-Prime from HF
     │   └── parse_prime_processed.py
     ├── materialize/
@@ -135,8 +149,11 @@ stark-t2s-agent/
     │   └── execute_query.py      # SQL/SPARQL execution tool
     ├── agent/
     │   └── agent.py              # LangChain agent wiring
-    └── benchmark/
-        └── run_prime.py          # Benchmark runner
+    ├── benchmark/
+    │   └── run_prime.py          # Benchmark runner
+    └── scripts/
+        ├── build_stores.py       # Build stores CLI implementation
+        └── demo_chat.py          # Demo chat CLI implementation
 ```
 
 ## Architecture
@@ -189,10 +206,10 @@ The agent uses a **two-stage approach** for better entity matching:
 | Service | Port | Purpose |
 |---------|------|---------|
 | PostgreSQL | 5432 | SQL queries (typed tables) |
-| Fuseki | 3030 | SPARQL queries (RDF graph) |
+| Fuseki | 3031 | SPARQL queries (RDF graph) |
 | Qdrant | 6333 | Vector search for entity resolution |
 
-Access Fuseki web UI at: http://localhost:3030
+Access Fuseki web UI at: http://localhost:3031
 Access Qdrant dashboard at: http://localhost:6333/dashboard
 
 ## Environment Variables
@@ -208,10 +225,17 @@ Access Qdrant dashboard at: http://localhost:6333/dashboard
 | `STARK_CACHE_DIR` | *(unset)* | Override local cache path for downloads + benchmark outputs |
 | `POSTGRES_HOST` | `localhost` | PostgreSQL host |
 | `POSTGRES_PORT` | `5432` | PostgreSQL port |
+| `POSTGRES_DB` | `stark_prime` | PostgreSQL database |
+| `POSTGRES_USER` | `stark` | PostgreSQL user |
+| `POSTGRES_PASSWORD` | `stark_password` | PostgreSQL password |
 | `FUSEKI_HOST` | `localhost` | Fuseki host |
-| `FUSEKI_PORT` | `3030` | Fuseki port |
+| `FUSEKI_PORT` | `3031` | Fuseki port |
+| `FUSEKI_DATASET` | `prime` | Fuseki dataset name |
+| `FUSEKI_ADMIN_PASSWORD` | `admin` | Fuseki admin password |
 | `QDRANT_HOST` | `localhost` | Qdrant host |
 | `QDRANT_PORT` | `6333` | Qdrant port |
+| `QDRANT_COLLECTION` | `stark_entities` | Qdrant collection (default index) |
+| `QDRANT_COLLECTION_FULL` | `stark_entities_full` | Qdrant collection (full index) |
 | `LANGFUSE_ENABLED` | `true` | Enable Langfuse tracing |
 | `LANGFUSE_SECRET_KEY` | - | Langfuse secret key |
 | `LANGFUSE_PUBLIC_KEY` | - | Langfuse public key |
