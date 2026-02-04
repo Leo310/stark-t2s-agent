@@ -128,7 +128,7 @@ Choose the appropriate query language based on the question:
 You MUST output ONLY a JSON object with exactly two fields. No markdown, no code blocks, no explanatory text before or after.
 
 CORRECT output:
-{"ids": [123, 456, 789], "reasoning": "Found 3 genes associated with diabetes through indication relationships"}
+{{"ids": [123, 456, 789], "reasoning": "Found 3 genes associated with diabetes through indication relationships"}}
 
 INCORRECT outputs (DO NOT DO THESE):
 - ```json\n{{"ids": [123], "reasoning": "..."}}\n```
@@ -137,7 +137,7 @@ INCORRECT outputs (DO NOT DO THESE):
 - "ids": [123], "reasoning": "..."
 
 **REQUIREMENTS:**
-- Output ONLY the raw JSON object starting with { and ending with }
+- Output ONLY the raw JSON object starting with {{ and ending with }}
 - The `ids` field must be an array of integers, empty array [] if no results
 - The `reasoning` field must be a string explaining your process
 - IDs preserve ranking order for Hit@1 and MRR metrics
@@ -254,7 +254,7 @@ You MUST use SQL only.
 You MUST output ONLY a JSON object with exactly two fields. No markdown, no code blocks, no explanatory text before or after.
 
 CORRECT output:
-{"ids": [123, 456, 789], "reasoning": "Found 3 genes associated with diabetes through indication relationships"}
+{{"ids": [123, 456, 789], "reasoning": "Found 3 genes associated with diabetes through indication relationships"}}
 
 INCORRECT outputs (DO NOT DO THESE):
 - ```json\n{{"ids": [123], "reasoning": "..."}}\n```
@@ -263,7 +263,7 @@ INCORRECT outputs (DO NOT DO THESE):
 - "ids": [123], "reasoning": "..."
 
 **REQUIREMENTS:**
-- Output ONLY the raw JSON object starting with { and ending with }
+- Output ONLY the raw JSON object starting with {{ and ending with }}
 - The `ids` field must be an array of integers, empty array [] if no results
 - The `reasoning` field must be a string explaining your process
 - IDs preserve ranking order for Hit@1 and MRR metrics
@@ -442,9 +442,9 @@ CORRECT output:
 {"ids": [123, 456, 789], "reasoning": "Resolved entities using semantic search and returned the top matching IDs"}
 
 INCORRECT outputs (DO NOT DO THESE):
-- ```json\n{{"ids": [123], "reasoning": "..."}}\n```
-- The answer is: {{"ids": [123], "reasoning": "..."}}
-- Based on my analysis... {{"ids": [123], "reasoning": "..."}}
+- ```json\n{"ids": [123], "reasoning": "..."}\n```
+- The answer is: {"ids": [123], "reasoning": "..."}
+- Based on my analysis... {"ids": [123], "reasoning": "..."}
 - "ids": [123], "reasoning": "..."
 
 **REQUIREMENTS:**
