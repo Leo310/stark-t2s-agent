@@ -724,6 +724,8 @@ def create_stark_prime_agent(
     else:
         raise ValueError(f"Unknown LLM provider: {provider}. Use 'openai' or 'openrouter'.")
 
+    _init_langfuse()
+
     # Build/load entity index for semantic search
     if build_entity_index_on_start:
         print("Building entity index for semantic search...")
@@ -792,6 +794,8 @@ def create_stark_prime_sql_agent(
     else:
         raise ValueError(f"Unknown LLM provider: {provider}. Use 'openai' or 'openrouter'.")
 
+    _init_langfuse()
+
     if build_entity_index_on_start:
         print("Building entity index for semantic search...")
         build_entity_index()
@@ -854,6 +858,8 @@ def create_stark_prime_sparql_agent(
     else:
         raise ValueError(f"Unknown LLM provider: {provider}. Use 'openai' or 'openrouter'.")
 
+    _init_langfuse()
+
     if build_entity_index_on_start:
         print("Building entity index for semantic search...")
         build_entity_index()
@@ -915,6 +921,8 @@ def create_stark_prime_entity_resolver_agent(
         model_name = model or OPENAI_MODEL
     else:
         raise ValueError(f"Unknown LLM provider: {provider}. Use 'openai' or 'openrouter'.")
+
+    _init_langfuse()
 
     if build_entity_index_on_start:
         print("Building entity index for semantic search...")

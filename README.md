@@ -125,6 +125,29 @@ run-benchmark --agent sql
 run-benchmark --agent sparql
 ```
 
+
+## Example benchmark results (gpt-5-mini) — STaRK-Prime human dataset
+
+The following table shows sample benchmark results captured from a Langfuse run using the `gpt-5-mini` model on the STaRK-Prime human dataset (`stark_prime_human`). Metrics are reported by the Langfuse benchmark runner.
+
+| Name                    | Latency       | Total Cost       | Hit@1         | Hit@5         | MRR         | Recall        |
+|-------------------------|---------------:|------------------:|--------------:|--------------:|------------:|---------------:|
+| Search only             | 32.03s         | $0.623994         | 32.11%        | 37.61%        | 34.33%      | 27.04%        |
+| SQL only                | 1m 4s          | $1.226361         | 44.00%        | 57.00%        | 48.66%      | 45.49%        |
+| SPARQL only             | 56.43s         | $1.09769          | 47.17%        | 57.55%        | 50.81%      | 44.64%        |
+| SQL + SPARQL            | 1m 10s         | $1.106999         | 46.23%        | 53.77%        | 49.63%      | 44.42%        |
+
+Note: these are example results meant to illustrate relative performance between agent modes. Re-run `run-benchmark --dataset stark_prime_human` in your environment to produce up-to-date numbers for your setup.
+
+Metric definitions
+
+- Hit@1 / Hit@5: Percentage of queries where the correct result appears in the top 1 or top 5 returned answers, respectively.
+- MRR: Mean Reciprocal Rank — average of the reciprocal ranks of the first correct answer (higher is better).
+- Recall: Fraction of relevant items retrieved for the query (higher is better).
+- Latency: Average end-to-end time for an agent run (includes entity resolution + query execution).
+- Total Cost: Sum of trace/model costs reported by Langfuse for the benchmark run.
+
+
 ## Project Structure
 
 ```

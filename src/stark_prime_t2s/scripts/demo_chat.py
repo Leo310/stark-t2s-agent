@@ -63,7 +63,7 @@ def check_services_ready() -> bool:
     from stark_prime_t2s.tools.execute_query import get_sql_store, get_sparql_store
     from stark_prime_t2s.tools.entity_resolver import build_entity_index
 
-    print("Checking Docker services...")
+    print("  ✓ Checking Docker services...")
 
     # Check PostgreSQL
     try:
@@ -139,7 +139,7 @@ def main():
             agent_mode = "auto"
 
     # Create agent
-    print("Initializing agent...")
+    print("  ✓ Initializing agent...")
     try:
         if agent_mode == "sql":
             agent = create_stark_prime_sql_agent(model=args.model)
