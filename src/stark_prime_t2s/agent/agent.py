@@ -6,11 +6,17 @@ from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
 
 from stark_prime_t2s.config import (
+    DATABRICKS_HOST,
+    DATABRICKS_TOKEN,
     LANGFUSE_BASE_URL,
     LANGFUSE_ENABLED,
     LANGFUSE_PUBLIC_KEY,
     LANGFUSE_SECRET_KEY,
     LLM_PROVIDER,
+    MLFLOW_ENABLED,
+    MLFLOW_EXPERIMENT_ID,
+    MLFLOW_REGISTRY_URI,
+    MLFLOW_TRACKING_URI,
     MAX_AGENT_ITERATIONS,
     MAX_QUERY_ROWS,
     OPENAI_API_KEY,
@@ -24,7 +30,6 @@ from stark_prime_t2s.tools.entity_resolver import (
     get_search_entities_tool,
 )
 from stark_prime_t2s.tools.execute_query import (
-    get_execute_query_tool,
     get_execute_sparql_query_tool,
     get_execute_sql_query_tool,
     get_schema_and_vocab_summary,
@@ -37,16 +42,20 @@ SYSTEM_PROMPT_TEMPLATE = """You are an expert biomedical knowledge base analyst.
 
 ## Available Tools
 
-You have access to TWO tools:
+You have access to THREE tools:
 
 1. **search_entities_tool** - Semantic search to find entities by name/description
    - Use this FIRST to resolve entity names to their IDs
    - Handles synonyms, partial matches, and related terms
    - Returns entity IDs that you can use in queries
 
-2. **execute_query_tool** - Execute SQL or SPARQL queries
+2. **execute_sql_query_tool** - Execute SQL queries (PostgreSQL)
     - Use AFTER finding entity IDs with search_entities_tool
-    - Supports SQL (PostgreSQL) and SPARQL (Fuseki)
+    - Best for aggregations, joins, and filtering
+
+3. **execute_sparql_query_tool** - Execute SPARQL queries (Fuseki)
+    - Use AFTER finding entity IDs with search_entities_tool
+    - Best for path traversal and pattern matching
 
 ## Two-Stage Query Process (IMPORTANT!)
 
@@ -65,7 +74,7 @@ Example: For "What genes are associated with both diabetes and hypertension?"
 
 ### Stage 2: Query Execution  
 Use the resolved entity IDs in your SQL or SPARQL query:
-→ Then: `execute_query_tool("sql", "SELECT ...")` or `execute_query_tool("sparql", "PREFIX sp: ...")`
+→ Then: `execute_sql_query_tool("SELECT ...")` or `execute_sparql_query_tool("PREFIX sp: ...")`
 
 ## Exploration Strategy
 
@@ -164,11 +173,11 @@ INCORRECT outputs (DO NOT DO THESE):
 
 Example SQL workflow:
 1. `search_entities_tool("breast cancer", "disease")` → ID: 789
-2. `execute_query_tool("sql", "SELECT dst_id FROM indication WHERE src_id = 789")`
+2. `execute_sql_query_tool("SELECT dst_id FROM indication WHERE src_id = 789")`
 
 Example SPARQL workflow:
 1. `search_entities_tool("insulin", "gene_protein")` → ID: 456
-2. `execute_query_tool("sparql", "PREFIX sp: <http://stark.stanford.edu/prime/> SELECT ?related WHERE {{ <http://stark.stanford.edu/prime/node/456> sp:associatedWith ?related }} LIMIT 5")`
+2. `execute_sparql_query_tool("PREFIX sp: <http://stark.stanford.edu/prime/> SELECT ?related WHERE {{ <http://stark.stanford.edu/prime/node/456> sp:associatedWith ?related }} LIMIT 5")`
 
 Now answer the user's question using the two-stage approach.
 """
@@ -478,6 +487,14 @@ Now answer the user's question using the entity resolution strategy.
 
 _langfuse_initialized = False
 _langfuse_handler = None
+_mlflow_initialized = False
+
+
+def _report_observability_mode():
+    if LANGFUSE_ENABLED and MLFLOW_ENABLED:
+        raise ValueError(
+            "Observability misconfigured: LANGFUSE_ENABLED and MLFLOW_ENABLED cannot both be true."
+        )
 
 
 def _init_langfuse():
@@ -487,6 +504,8 @@ def _init_langfuse():
     with environment variables and then access it via get_client().
     """
     global _langfuse_initialized
+
+    _report_observability_mode()
 
     if _langfuse_initialized:
         return True
@@ -525,6 +544,51 @@ def _init_langfuse():
         return False
     except Exception as e:
         print(f"  Warning: Could not initialize Langfuse: {e}")
+        return False
+
+
+def _init_mlflow():
+    """Initialize MLflow LangChain autologging (Databricks-hosted)."""
+    global _mlflow_initialized
+
+    _report_observability_mode()
+
+    if _mlflow_initialized:
+        return True
+
+    if not MLFLOW_ENABLED:
+        return False
+
+    try:
+        import os
+        import importlib
+
+        if DATABRICKS_HOST:
+            os.environ["DATABRICKS_HOST"] = DATABRICKS_HOST
+        if DATABRICKS_TOKEN:
+            os.environ["DATABRICKS_TOKEN"] = DATABRICKS_TOKEN
+        if MLFLOW_TRACKING_URI:
+            os.environ["MLFLOW_TRACKING_URI"] = MLFLOW_TRACKING_URI
+        if MLFLOW_REGISTRY_URI:
+            os.environ["MLFLOW_REGISTRY_URI"] = MLFLOW_REGISTRY_URI
+        if MLFLOW_EXPERIMENT_ID:
+            os.environ["MLFLOW_EXPERIMENT_ID"] = MLFLOW_EXPERIMENT_ID
+
+        mlflow = importlib.import_module("mlflow")
+
+        if MLFLOW_EXPERIMENT_ID:
+            mlflow.set_experiment(experiment_id=MLFLOW_EXPERIMENT_ID)
+
+        mlflow.langchain.autolog()
+
+        _mlflow_initialized = True
+        print("  ✓ MLflow LangChain autolog enabled", flush=True)
+        return True
+    except ImportError:
+        print("  Warning: mlflow not installed, tracing disabled")
+        return False
+    except Exception as e:
+        print(f"  Warning: Could not initialize MLflow: {e}")
         return False
 
 
@@ -614,6 +678,9 @@ def get_callbacks() -> list:
     if langfuse:
         callbacks.append(langfuse)
 
+    if not langfuse:
+        _init_mlflow()
+
     return callbacks
 
 
@@ -680,6 +747,7 @@ def create_stark_prime_agent(
     model: str | None = None,
     temperature: float = 0.0,
     build_entity_index_on_start: bool = True,
+    log_ready: bool = True,
     **kwargs: Any,
 ):
     """Create a LangChain agent for STaRK-Prime queries.
@@ -689,7 +757,8 @@ def create_stark_prime_agent(
 
     The agent uses a two-stage approach:
     1. Entity resolution via semantic search (search_entities_tool)
-    2. Query execution via SQL/SPARQL (execute_query_tool)
+    2. Query execution via SQL (execute_sql_query_tool)
+       or SPARQL (execute_sparql_query_tool)
 
     Args:
         model: The model to use. Defaults to config.OPENAI_MODEL or config.OPENROUTER_MODEL.
@@ -725,10 +794,12 @@ def create_stark_prime_agent(
         raise ValueError(f"Unknown LLM provider: {provider}. Use 'openai' or 'openrouter'.")
 
     _init_langfuse()
+    _init_mlflow()
 
     # Build/load entity index for semantic search
     if build_entity_index_on_start:
-        print("Building entity index for semantic search...")
+        if log_ready:
+            print("Building entity index for semantic search...")
         build_entity_index()
 
     # Initialize the chat model
@@ -747,11 +818,13 @@ def create_stark_prime_agent(
         **init_kwargs,
     )
 
-    print(f"  Agent ready (provider: {provider}, model: {model_name})")
+    if log_ready:
+        print(f"  Agent ready (provider: {provider}, model: {model_name})")
 
     # Get the tools (two-stage approach)
     search_tool = get_search_entities_tool()
-    query_tool = get_execute_query_tool()
+    sql_query_tool = get_execute_sql_query_tool()
+    sparql_query_tool = get_execute_sparql_query_tool()
 
     # Get the system prompt
     system_prompt = get_system_prompt()
@@ -759,7 +832,7 @@ def create_stark_prime_agent(
     # Create the agent using LangChain v1's create_agent
     agent = create_agent(
         llm,
-        tools=[search_tool, query_tool],
+        tools=[search_tool, sql_query_tool, sparql_query_tool],
         system_prompt=system_prompt,
     )
 
@@ -770,6 +843,7 @@ def create_stark_prime_sql_agent(
     model: str | None = None,
     temperature: float = 0.0,
     build_entity_index_on_start: bool = True,
+    log_ready: bool = True,
     **kwargs: Any,
 ):
     """Create a LangChain agent that can only execute SQL queries."""
@@ -795,9 +869,11 @@ def create_stark_prime_sql_agent(
         raise ValueError(f"Unknown LLM provider: {provider}. Use 'openai' or 'openrouter'.")
 
     _init_langfuse()
+    _init_mlflow()
 
     if build_entity_index_on_start:
-        print("Building entity index for semantic search...")
+        if log_ready:
+            print("Building entity index for semantic search...")
         build_entity_index()
 
     init_kwargs = {
@@ -815,7 +891,8 @@ def create_stark_prime_sql_agent(
         **init_kwargs,
     )
 
-    print(f"  Agent ready (provider: {provider}, model: {model_name})")
+    if log_ready:
+        print(f"  Agent ready (provider: {provider}, model: {model_name})")
 
     search_tool = get_search_entities_tool()
     query_tool = get_execute_sql_query_tool()
@@ -834,6 +911,7 @@ def create_stark_prime_sparql_agent(
     model: str | None = None,
     temperature: float = 0.0,
     build_entity_index_on_start: bool = True,
+    log_ready: bool = True,
     **kwargs: Any,
 ):
     """Create a LangChain agent that can only execute SPARQL queries."""
@@ -859,9 +937,11 @@ def create_stark_prime_sparql_agent(
         raise ValueError(f"Unknown LLM provider: {provider}. Use 'openai' or 'openrouter'.")
 
     _init_langfuse()
+    _init_mlflow()
 
     if build_entity_index_on_start:
-        print("Building entity index for semantic search...")
+        if log_ready:
+            print("Building entity index for semantic search...")
         build_entity_index()
 
     init_kwargs = {
@@ -879,7 +959,8 @@ def create_stark_prime_sparql_agent(
         **init_kwargs,
     )
 
-    print(f"  Agent ready (provider: {provider}, model: {model_name})")
+    if log_ready:
+        print(f"  Agent ready (provider: {provider}, model: {model_name})")
 
     search_tool = get_search_entities_tool()
     query_tool = get_execute_sparql_query_tool()
@@ -898,6 +979,7 @@ def create_stark_prime_entity_resolver_agent(
     model: str | None = None,
     temperature: float = 0.0,
     build_entity_index_on_start: bool = True,
+    log_ready: bool = True,
     **kwargs: Any,
 ):
     """Create a LangChain agent that can only resolve entities via semantic search."""
@@ -923,9 +1005,11 @@ def create_stark_prime_entity_resolver_agent(
         raise ValueError(f"Unknown LLM provider: {provider}. Use 'openai' or 'openrouter'.")
 
     _init_langfuse()
+    _init_mlflow()
 
     if build_entity_index_on_start:
-        print("Building entity index for semantic search...")
+        if log_ready:
+            print("Building entity index for semantic search...")
         build_entity_index()
 
     init_kwargs = {
@@ -943,7 +1027,8 @@ def create_stark_prime_entity_resolver_agent(
         **init_kwargs,
     )
 
-    print(f"  Agent ready (provider: {provider}, model: {model_name})")
+    if log_ready:
+        print(f"  Agent ready (provider: {provider}, model: {model_name})")
 
     search_tool = get_search_entities_tool()
     system_prompt = get_entity_only_system_prompt()
@@ -1010,18 +1095,41 @@ async def run_agent_query(
         messages = result.get("messages", [])
         final_answer = ""
         tool_calls = []
+        pending_tool_call_args: dict[str, dict] = {}  # tool_call_id -> args
 
         for msg in messages:
             if hasattr(msg, "content") and hasattr(msg, "type"):
                 if msg.type == "ai":
                     final_answer = msg.content
+                    # Extract and store tool call args from AI message
+                    ai_tool_calls = getattr(msg, "tool_calls", None)
+                    if ai_tool_calls:
+                        for tc in ai_tool_calls:
+                            tc_id = (
+                                tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
+                            )
+                            tc_args = (
+                                tc.get("args")
+                                if isinstance(tc, dict)
+                                else getattr(tc, "args", None)
+                            )
+                            if tc_id and tc_args:
+                                pending_tool_call_args[tc_id] = tc_args
                 elif msg.type == "tool":
+                    call_args = getattr(msg, "tool_input", None)
+                    if call_args is None:
+                        call_args = getattr(msg, "kwargs", None)
+                    # If we didn't get args from the message, get from pending
+                    tool_call_id = getattr(msg, "tool_call_id", None)
+                    if call_args is None and tool_call_id:
+                        call_args = pending_tool_call_args.get(tool_call_id)
                     tool_calls.append(
                         {
                             "name": getattr(msg, "name", "unknown"),
                             "content": (
                                 msg.content[:500] + "..." if len(msg.content) > 500 else msg.content
                             ),
+                            "input": call_args,
                         }
                     )
 
@@ -1101,17 +1209,58 @@ def run_agent_query_sync(
         final_answer = ""
         tool_calls = []
 
+        # Track iterations: each AI message with tool_calls is one iteration
+        # All tools called in the same AI message are parallel (same iteration)
+        current_iteration = 0
+        pending_tool_call_ids: dict[str, int] = {}  # tool_call_id -> iteration
+        pending_tool_call_args: dict[str, dict] = {}  # tool_call_id -> args
+
         for msg in messages:
             if hasattr(msg, "content") and hasattr(msg, "type"):
                 if msg.type == "ai":
                     final_answer = msg.content
+                    # Check if this AI message has tool calls (requests)
+                    ai_tool_calls = getattr(msg, "tool_calls", None)
+                    if ai_tool_calls:
+                        current_iteration += 1
+                        # Map each tool_call_id to this iteration and store args
+                        for tc in ai_tool_calls:
+                            tc_id = (
+                                tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
+                            )
+                            if tc_id:
+                                pending_tool_call_ids[tc_id] = current_iteration
+                                # Extract args from the tool call
+                                tc_args = (
+                                    tc.get("args")
+                                    if isinstance(tc, dict)
+                                    else getattr(tc, "args", None)
+                                )
+                                if tc_args:
+                                    pending_tool_call_args[tc_id] = tc_args
                 elif msg.type == "tool":
+                    # Try to get args from the tool message first
+                    call_args = getattr(msg, "tool_input", None)
+                    if call_args is None:
+                        call_args = getattr(msg, "kwargs", None)
+                    # Get the iteration and args from the pending tool call
+                    tool_call_id = getattr(msg, "tool_call_id", None)
+                    iteration = (
+                        pending_tool_call_ids.get(tool_call_id, current_iteration)
+                        if tool_call_id
+                        else current_iteration
+                    )
+                    # If we didn't get args from the message, get from pending
+                    if call_args is None and tool_call_id:
+                        call_args = pending_tool_call_args.get(tool_call_id)
                     tool_calls.append(
                         {
                             "name": getattr(msg, "name", "unknown"),
                             "content": (
                                 msg.content[:500] + "..." if len(msg.content) > 500 else msg.content
                             ),
+                            "input": call_args,
+                            "iteration": iteration,
                         }
                     )
 

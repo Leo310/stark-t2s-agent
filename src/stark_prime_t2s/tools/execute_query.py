@@ -54,18 +54,28 @@ class QueryResult(BaseModel):
 
 _sql_store = None
 _sparql_store = None
+_sql_store_lock = None
 
 
 def get_sql_store():
     """Get the PostgreSQL store instance."""
-    global _sql_store
+    global _sql_store, _sql_store_lock
     if _sql_store is None:
-        from stark_prime_t2s.materialize.postgres_prime import PostgresPrimeStore
+        import threading
 
-        _sql_store = PostgresPrimeStore()
-        _sql_store.load_table_mappings()
-        # Ensure unified views exist and are up-to-date (normalized types/edge_type)
-        _sql_store._create_unified_views()
+        if _sql_store_lock is None:
+            _sql_store_lock = threading.Lock()
+
+        with _sql_store_lock:
+            # Double-check pattern
+            if _sql_store is None:
+                from stark_prime_t2s.materialize.postgres_prime import PostgresPrimeStore
+
+                _sql_store = PostgresPrimeStore()
+                _sql_store.load_table_mappings()
+                # Ensure unified views exist and are up-to-date (normalized types/edge_type)
+                # Only create views once per process, not per thread
+                _sql_store._create_unified_views()
     return _sql_store
 
 
@@ -164,45 +174,6 @@ def execute_sparql_query(query: str) -> QueryResult:
         )
 
 
-def execute_query(language: str, query: str) -> str:
-    """Execute a SQL or SPARQL query."""
-    language_lower = language.lower().strip()
-
-    if language_lower == "sql":
-        result = execute_sql_query(query)
-    elif language_lower == "sparql":
-        result = execute_sparql_query(query)
-    else:
-        return f"Error: Unknown query language '{language}'. Use 'sql' or 'sparql'."
-
-    return result.to_string()
-
-
-@tool
-def execute_query_tool(language: str, query: str) -> str:
-    """Execute a SQL or SPARQL query against the STaRK-Prime biomedical knowledge base.
-
-    Use this tool to query the knowledge base for information about diseases, drugs,
-    genes/proteins, pathways, molecular functions, and their relationships.
-
-    Args:
-        language: The query language to use. Must be either:
-            - "sql" for SQL queries against PostgreSQL
-            - "sparql" for SPARQL queries against Fuseki
-        query: The query string to execute. Must be read-only:
-            - SQL: Only SELECT statements allowed
-            - SPARQL: Only SELECT, ASK, CONSTRUCT, DESCRIBE allowed
-
-    Returns:
-        The query results formatted as a table, or an error message if the query failed.
-
-    Examples:
-        SQL: SELECT * FROM disease LIMIT 5
-        SPARQL: SELECT ?node ?name WHERE { ?node a sp:Disease . ?node sp:name ?name } LIMIT 5
-    """
-    return execute_query(language, query)
-
-
 @tool
 def execute_sql_query_tool(query: str) -> str:
     """Execute a SQL query against the STaRK-Prime biomedical knowledge base.
@@ -213,7 +184,8 @@ def execute_sql_query_tool(query: str) -> str:
     Returns:
         The query results formatted as a table, or an error message if the query failed.
     """
-    return execute_query("sql", query)
+    result = execute_sql_query(query)
+    return result.to_string()
 
 
 @tool
@@ -226,12 +198,8 @@ def execute_sparql_query_tool(query: str) -> str:
     Returns:
         The query results formatted as a table, or an error message if the query failed.
     """
-    return execute_query("sparql", query)
-
-
-def get_execute_query_tool():
-    """Get the execute_query tool for use with create_agent."""
-    return execute_query_tool
+    result = execute_sparql_query(query)
+    return result.to_string()
 
 
 def get_execute_sql_query_tool():
@@ -314,13 +282,12 @@ if __name__ == "__main__":
     print()
 
     print("SQL Test:")
-    result = execute_query("sql", "SELECT id, name FROM disease LIMIT 5")
-    print(result)
+    result = execute_sql_query("SELECT id, name FROM disease LIMIT 5")
+    print(result.to_string())
     print()
 
     print("SPARQL Test:")
-    result = execute_query(
-        "sparql",
+    result = execute_sparql_query(
         """
         PREFIX sp: <http://stark.stanford.edu/prime/>
         SELECT ?node ?name WHERE {
@@ -328,4 +295,4 @@ if __name__ == "__main__":
         } LIMIT 5
     """,
     )
-    print(result)
+    print(result.to_string())

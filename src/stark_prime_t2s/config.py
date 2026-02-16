@@ -62,6 +62,39 @@ BENCHMARK_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openai")
 
 # ---------------------------------------------------------------------------
+# Embedding Provider Configuration
+# ---------------------------------------------------------------------------
+
+# Provider selection: "openai", "openrouter", "huggingface", "azure", or "cohere"
+# If not set, defaults to the same provider as LLM_PROVIDER
+EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "openai")
+
+# Embedding model (provider-specific)
+# OpenAI: "text-embedding-3-small", "text-embedding-3-large", "text-embedding-ada-002"
+# OpenRouter: Uses OpenAI-compatible models via OpenRouter
+# HuggingFace: e.g., "sentence-transformers/all-MiniLM-L6-v2"
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
+
+# Custom base URL for embeddings (for self-hosted or proxy endpoints)
+# Examples: "http://localhost:11434", "https://custom-api.example.com"
+EMBEDDING_BASE_URL = os.getenv("EMBEDDING_BASE_URL")
+
+# HuggingFace-specific settings (only used if EMBEDDING_PROVIDER="huggingface")
+HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
+HUGGINGFACE_EMBEDDING_MODEL = os.getenv(
+    "HUGGINGFACE_EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2"
+)
+
+# Azure OpenAI settings (only used if EMBEDDING_PROVIDER="azure")
+AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
+AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
+AZURE_OPENAI_EMBEDDING_DEPLOYMENT = os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT")
+
+# Cohere settings (only used if EMBEDDING_PROVIDER="cohere")
+COHERE_API_KEY = os.getenv("COHERE_API_KEY")
+COHERE_EMBEDDING_MODEL = os.getenv("COHERE_EMBEDDING_MODEL", "embed-english-v3")
+
+# ---------------------------------------------------------------------------
 # OpenAI Configuration
 # ---------------------------------------------------------------------------
 
@@ -82,7 +115,7 @@ OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openai/gpt-4o-mini")
 
 MAX_QUERY_ROWS = 50
 MAX_QUERY_RETRIES = 3
-MAX_AGENT_ITERATIONS = 25
+MAX_AGENT_ITERATIONS = 100
 
 # ---------------------------------------------------------------------------
 # RDF Namespace
@@ -125,3 +158,14 @@ LANGFUSE_ENABLED = os.getenv("LANGFUSE_ENABLED", "true").lower() == "true"
 LANGFUSE_SECRET_KEY = os.getenv("LANGFUSE_SECRET_KEY")
 LANGFUSE_PUBLIC_KEY = os.getenv("LANGFUSE_PUBLIC_KEY")
 LANGFUSE_BASE_URL = os.getenv("LANGFUSE_BASE_URL", "https://cloud.langfuse.com")
+
+# ---------------------------------------------------------------------------
+# MLflow Observability (Databricks-hosted)
+# ---------------------------------------------------------------------------
+
+MLFLOW_ENABLED = os.getenv("MLFLOW_ENABLED", "false").lower() == "true"
+DATABRICKS_HOST = os.getenv("DATABRICKS_HOST")
+DATABRICKS_TOKEN = os.getenv("DATABRICKS_TOKEN")
+MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "databricks")
+MLFLOW_REGISTRY_URI = os.getenv("MLFLOW_REGISTRY_URI")
+MLFLOW_EXPERIMENT_ID = os.getenv("MLFLOW_EXPERIMENT_ID")

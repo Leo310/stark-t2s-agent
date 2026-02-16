@@ -9,13 +9,25 @@ Uses Qdrant vector database (Docker) for persistent storage.
 from typing import Any
 
 from langchain.tools import tool
-from langchain_openai import OpenAIEmbeddings
-from pydantic import BaseModel, Field
+from langchain_core.embeddings import Embeddings
+from pydantic import BaseModel, Field, SecretStr
 from qdrant_client import QdrantClient
 from qdrant_client.models import FieldCondition, Filter, MatchValue
 
 from stark_prime_t2s.config import (
+    AZURE_OPENAI_API_KEY,
+    AZURE_OPENAI_EMBEDDING_DEPLOYMENT,
+    AZURE_OPENAI_ENDPOINT,
+    COHERE_API_KEY,
+    COHERE_EMBEDDING_MODEL,
+    EMBEDDING_BASE_URL,
+    EMBEDDING_MODEL,
+    EMBEDDING_PROVIDER,
+    HUGGINGFACE_API_KEY,
+    HUGGINGFACE_EMBEDDING_MODEL,
     OPENAI_API_KEY,
+    OPENROUTER_API_KEY,
+    OPENROUTER_BASE_URL,
     QDRANT_COLLECTION,
     QDRANT_COLLECTION_FULL,
     QDRANT_HOST,
@@ -67,7 +79,7 @@ class EntitySearchResult(BaseModel):
 # ---------------------------------------------------------------------------
 
 _qdrant_client: QdrantClient | None = None
-_embeddings: OpenAIEmbeddings | None = None
+_embeddings: Embeddings | None = None
 
 
 def _get_qdrant_client() -> QdrantClient:
@@ -78,14 +90,94 @@ def _get_qdrant_client() -> QdrantClient:
     return _qdrant_client
 
 
-def _get_embeddings() -> OpenAIEmbeddings:
-    """Get OpenAI embeddings instance (singleton)."""
+def _get_embeddings() -> Embeddings:
+    """Get embeddings instance (singleton) based on EMBEDDING_PROVIDER config.
+
+    Supported providers:
+    - "openai": Uses OpenAI embeddings (default)
+    - "openrouter": Uses OpenAI-compatible embeddings via OpenRouter
+    - "huggingface": Uses HuggingFace sentence-transformers (local)
+    - "azure": Uses Azure OpenAI embeddings
+    - "cohere": Uses Cohere embeddings
+
+    Returns:
+        Embeddings instance configured per EMBEDDING_PROVIDER and EMBEDDING_MODEL
+    """
     global _embeddings
     if _embeddings is None:
-        _embeddings = OpenAIEmbeddings(
-            model="text-embedding-3-small",
-            api_key=OPENAI_API_KEY,
-        )
+        provider = EMBEDDING_PROVIDER.lower()
+
+        if provider == "openai":
+            from langchain_openai import OpenAIEmbeddings
+
+            api_key = SecretStr(OPENAI_API_KEY) if OPENAI_API_KEY else None
+            base_url = EMBEDDING_BASE_URL or OPENROUTER_BASE_URL  # Allow custom base URL override
+            _embeddings = OpenAIEmbeddings(
+                model=EMBEDDING_MODEL,
+                check_embedding_ctx_length=False,
+                api_key=api_key,
+                base_url=base_url,
+            )
+
+        elif provider == "openrouter":
+            # OpenRouter is OpenAI-compatible
+            from langchain_openai import OpenAIEmbeddings
+
+            api_key = SecretStr(OPENROUTER_API_KEY) if OPENROUTER_API_KEY else None
+            base_url = EMBEDDING_BASE_URL or OPENROUTER_BASE_URL
+            _embeddings = OpenAIEmbeddings(
+                model=EMBEDDING_MODEL,
+                check_embedding_ctx_length=False,
+                api_key=api_key,
+                base_url=base_url,
+            )
+
+        elif provider == "huggingface":
+            try:
+                from langchain_huggingface import HuggingFaceEmbeddings
+            except ImportError as e:
+                raise ImportError(
+                    "HuggingFace embeddings provider selected but langchain-huggingface is not installed. "
+                    "Install it with: pip install langchain-huggingface sentence-transformers"
+                ) from e
+
+            model_name = HUGGINGFACE_EMBEDDING_MODEL
+            _embeddings = HuggingFaceEmbeddings(
+                model_name=model_name,
+                model_kwargs={"device": "cpu"},
+                encode_kwargs={"normalize_embeddings": True},
+            )
+
+        elif provider == "azure":
+            from langchain_openai import AzureOpenAIEmbeddings
+
+            _embeddings = AzureOpenAIEmbeddings(
+                model=EMBEDDING_MODEL,
+                azure_endpoint=AZURE_OPENAI_ENDPOINT,
+                api_key=SecretStr(AZURE_OPENAI_API_KEY) if AZURE_OPENAI_API_KEY else None,
+                azure_deployment=AZURE_OPENAI_EMBEDDING_DEPLOYMENT,
+            )
+
+        elif provider == "cohere":
+            try:
+                from langchain_cohere import CohereEmbeddings
+            except ImportError as e:
+                raise ImportError(
+                    "Cohere embeddings provider selected but langchain-cohere is not installed. "
+                    "Install it with: pip install langchain-cohere"
+                ) from e
+
+            _embeddings = CohereEmbeddings(
+                model=COHERE_EMBEDDING_MODEL,
+                cohere_api_key=SecretStr(COHERE_API_KEY) if COHERE_API_KEY else None,
+            )
+
+        else:
+            raise ValueError(
+                f"Unsupported EMBEDDING_PROVIDER: {EMBEDDING_PROVIDER}. "
+                f"Supported providers: openai, openrouter, huggingface, azure, cohere"
+            )
+
     return _embeddings
 
 
@@ -97,7 +189,7 @@ def _collection_exists() -> bool:
         for c in collections:
             if c.name == QDRANT_COLLECTION:
                 info = client.get_collection(QDRANT_COLLECTION)
-                return info.points_count > 0
+                return (info.points_count or 0) > 0
         return False
     except Exception:
         return False
@@ -142,7 +234,7 @@ def build_entity_index(_force_rebuild: bool = False) -> int:
         client = _get_qdrant_client()
         info = client.get_collection(QDRANT_COLLECTION)
         print(f"  ✓ Qdrant collection '{QDRANT_COLLECTION}' ready ({info.points_count} entities)")
-        return info.points_count
+        return int(info.points_count or 0)
     else:
         print(f"  Warning: Qdrant collection '{QDRANT_COLLECTION}' not found or empty")
         print("  Run: python scripts/build_prime_stores.py")
@@ -166,6 +258,26 @@ def search_entities(
         EntitySearchResult with matching entities
     """
     try:
+        if query is None:
+            print("Qdrant search warning: query is None")
+            return EntitySearchResult(entities=[], query="")
+        if not isinstance(query, str):
+            original_type = type(query).__name__
+            if isinstance(query, list):
+                query = " ".join(str(item) for item in query)
+            else:
+                query = str(query)
+            preview = query[:200]
+            print(
+                "Qdrant search warning: normalized non-string query",
+                f"type={original_type}",
+                f"preview={preview!r}",
+            )
+        query = query.strip()
+        if not query:
+            print("Qdrant search warning: empty query after normalization")
+            return EntitySearchResult(entities=[], query="")
+
         client = _get_qdrant_client()
         embeddings = _get_embeddings()
 
@@ -196,8 +308,9 @@ def search_entities(
         # Convert to entity dicts
         entities = []
         for hit in results.points:
-            name = hit.payload["name"]
-            full_name = hit.payload.get("full_name", "")
+            payload = hit.payload or {}
+            name = payload.get("name", "")
+            full_name = payload.get("full_name", "")
             # Show full name in parentheses if different from short name
             display_name = (
                 f"{name} ({full_name})" if full_name and full_name.lower() != name.lower() else name
@@ -205,17 +318,22 @@ def search_entities(
 
             entities.append(
                 {
-                    "id": hit.payload["entity_id"],
-                    "type": hit.payload["type"],
+                    "id": payload.get("entity_id"),
+                    "type": payload.get("type", ""),
                     "name": display_name,
-                    "description": hit.payload.get("description", ""),
+                    "description": payload.get("description", ""),
                 }
             )
 
         return EntitySearchResult(entities=entities, query=query)
 
     except Exception as e:
-        print(f"Qdrant search error: {e}")
+        print(
+            "Qdrant search error:",
+            e,
+            f"query_type={type(query).__name__}",
+            f"query_preview={str(query)[:200]!r}",
+        )
         return EntitySearchResult(entities=[], query=query)
 
 

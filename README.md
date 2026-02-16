@@ -6,7 +6,7 @@ A LangChain v1 agent that converts natural language queries into SQL or SPARQL f
 
 This project implements a text-to-SQL/SPARQL agent using LangChain v1 (with LangGraph) that:
 
-- **Two-stage query approach**: 
+- **Two-stage query approach**:
   1. **Entity Resolution**: Semantic search to find entity IDs from natural language
   2. **Query Execution**: SQL or SPARQL queries using resolved entity IDs
 - **Dual representation**: Materializes STaRK-Prime into both SQL (relational) and RDF (semantic) formats
@@ -18,6 +18,7 @@ This project implements a text-to-SQL/SPARQL agent using LangChain v1 (with Lang
 ## STaRK-Prime Dataset
 
 STaRK-Prime targets complex biomedical inquiries with:
+
 - **10 entity types**: disease, drug, gene/protein, molecular function, pathway, etc.
 - **18 relation types**: associated_with, indication, contraindication, side_effect, parent-child, etc.
 - **129,375 entities** and **8,100,498 relations**
@@ -39,7 +40,13 @@ pip install -e .
 
 ## Configuration
 
-Create a `.env` file in the project root:
+Copy the example environment file and fill in your API keys:
+
+```bash
+cp .example.env .env
+```
+
+Then edit `.env` with your configuration:
 
 ```env
 # Choose your LLM provider: openai or openrouter
@@ -67,6 +74,7 @@ docker-compose up -d
 ```
 
 This starts:
+
 - **PostgreSQL** on port 5432 (for SQL queries)
 - **Apache Jena Fuseki** on port 3031 (for SPARQL queries)
 - **Qdrant** on port 6333 (for entity resolution)
@@ -78,6 +86,7 @@ build-prime-stores
 ```
 
 This will:
+
 - Download `processed.zip` from HuggingFace (~100MB)
 - Parse node/edge types and metadata
 - Load data into PostgreSQL (typed tables)
@@ -99,43 +108,60 @@ demo-chat --agent sparql
 
 ### 4. Run benchmark
 
-The benchmark runner uses Langfuse datasets. Make sure these are set in `.env`:
-
-```env
-LANGFUSE_SECRET_KEY=sk-lf-...
-LANGFUSE_PUBLIC_KEY=pk-lf-...
-```
-
-List available datasets:
+First, download the QA datasets (stored in `~/.cache/stark-t2s-agent/prime/`):
 
 ```bash
-run-benchmark --list-datasets
+python -c "from stark_prime_t2s.dataset import download_prime_qa; download_prime_qa()"
 ```
 
-Run a benchmark (will prompt for dataset if not provided):
+Run benchmarks locally:
 
 ```bash
-run-benchmark --dataset stark_prime_synth --concurrency 2
+run-benchmark --backend local --dataset-file ~/.cache/stark-t2s-agent/prime/stark_qa_human.csv
 ```
 
-To benchmark SQL-only or SPARQL-only agents:
+Specify an agent mode:
 
 ```bash
-run-benchmark --agent sql
-run-benchmark --agent sparql
+run-benchmark --backend local --dataset-file ~/.cache/stark-t2s-agent/prime/stark_qa_human.csv --agent sql
+run-benchmark --backend local --dataset-file ~/.cache/stark-t2s-agent/prime/stark_qa_human.csv --agent sparql
 ```
 
+Additional options:
+
+```bash
+# Run with concurrency
+run-benchmark --backend local --dataset-file ~/.cache/stark-t2s-agent/prime/stark_qa_human.csv --concurrency 4
+
+# Limit number of items
+run-benchmark --backend local --dataset-file ~/.cache/stark-t2s-agent/prime/stark_qa_human.csv --dataset-limit 50
+
+# Custom run name and output directory
+run-benchmark --backend local --dataset-file ~/.cache/stark-t2s-agent/prime/stark_qa_human.csv --run-name my-experiment --output-dir my_runs
+```
+
+Results are saved to `benchmark_runs/` by default (or the directory specified with `--output-dir`).
+
+### 5. Analyze benchmark results
+
+After running benchmarks, you can analyze the results:
+
+```bash
+analyze-benchmark
+```
+
+This generates an HTML report with metrics comparison across different runs.
 
 ## Example benchmark results (gpt-5-mini) — STaRK-Prime human dataset
 
-The following table shows sample benchmark results captured from a Langfuse run using the `gpt-5-mini` model on the STaRK-Prime human dataset (`stark_prime_human`). Metrics are reported by the Langfuse benchmark runner.
+The following table shows benchmark results using the `gpt-5-mini` model on the STaRK-Prime human dataset (`stark_prime_human`). Metrics are averaged across 6 runs.
 
-| Name                    | Latency       | Total Cost       | Hit@1         | Hit@5         | MRR         | Recall        |
-|-------------------------|---------------:|------------------:|--------------:|--------------:|------------:|---------------:|
-| Search only             | 32.03s         | $0.623994         | 32.11%        | 37.61%        | 34.33%      | 27.04%        |
-| SQL only                | 1m 4s          | $1.226361         | 44.00%        | 57.00%        | 48.66%      | 45.49%        |
-| SPARQL only             | 56.43s         | $1.09769          | 47.17%        | 57.55%        | 50.81%      | 44.64%        |
-| SQL + SPARQL            | 1m 10s         | $1.106999         | 46.23%        | 53.77%        | 49.63%      | 44.42%        |
+| Name         | Latency |  Hit@1 |  Hit@5 |    MRR | Recall |
+| ------------ | ------: | -----: | -----: | -----: | -----: |
+| Search only  |   23.8s | 34.10% | 42.05% | 37.12% | 30.94% |
+| SQL only     |   47.6s | 44.94% | 57.82% | 49.92% | 46.46% |
+| SPARQL only  |   42.5s | 46.70% | 56.53% | 50.62% | 47.17% |
+| SQL + SPARQL |   39.4s | 46.94% | 59.79% | 52.12% | 47.04% |
 
 Note: these are example results meant to illustrate relative performance between agent modes. Re-run `run-benchmark --dataset stark_prime_human` in your environment to produce up-to-date numbers for your setup.
 
@@ -145,8 +171,6 @@ Metric definitions
 - MRR: Mean Reciprocal Rank — average of the reciprocal ranks of the first correct answer (higher is better).
 - Recall: Fraction of relevant items retrieved for the query (higher is better).
 - Latency: Average end-to-end time for an agent run (includes entity resolution + query execution).
-- Total Cost: Sum of trace/model costs reported by Langfuse for the benchmark run.
-
 
 ## Project Structure
 
@@ -155,8 +179,10 @@ stark-t2s-agent/
 ├── docker-compose.yml            # PostgreSQL, Fuseki, Qdrant services
 ├── pyproject.toml
 ├── README.md
-├── .env                          # API keys and config (create this)
+├── .env                          # API keys and config (create from .example.env)
+├── .example.env                  # Example environment variables template
 ├── scripts/
+│   ├── analyze_benchmark.py      # Wrapper for analyze-benchmark CLI
 │   ├── build_prime_stores.py     # Wrapper for build-prime-stores CLI
 │   └── demo_chat.py              # Wrapper for demo-chat CLI
 └── src/stark_prime_t2s/
@@ -173,7 +199,9 @@ stark-t2s-agent/
     ├── agent/
     │   └── agent.py              # LangChain agent wiring
     ├── benchmark/
-    │   └── run_prime.py          # Benchmark runner
+    │   ├── run_prime.py          # Benchmark runner
+    │   ├── analyze_local_runs.py # Analyze benchmark results
+    │   └── report_template.html  # HTML report template
     └── scripts/
         ├── build_stores.py       # Build stores CLI implementation
         └── demo_chat.py          # Demo chat CLI implementation
@@ -219,50 +247,66 @@ The agent uses a **two-stage approach** for better entity matching:
 
 ### Tools
 
-| Tool | Purpose |
-|------|---------|
+| Tool                   | Purpose                                                         |
+| ---------------------- | --------------------------------------------------------------- |
 | `search_entities_tool` | Semantic vector search to find entity IDs from natural language |
-| `execute_query_tool` | Execute SQL or SPARQL queries against the knowledge base |
+| `execute_query_tool`   | Execute SQL or SPARQL queries against the knowledge base        |
 
 ## Docker Services
 
-| Service | Port | Purpose |
-|---------|------|---------|
-| PostgreSQL | 5432 | SQL queries (typed tables) |
-| Fuseki | 3031 | SPARQL queries (RDF graph) |
-| Qdrant | 6333 | Vector search for entity resolution |
+| Service    | Port | Purpose                             |
+| ---------- | ---- | ----------------------------------- |
+| PostgreSQL | 5432 | SQL queries (typed tables)          |
+| Fuseki     | 3031 | SPARQL queries (RDF graph)          |
+| Qdrant     | 6333 | Vector search for entity resolution |
 
 Access Fuseki web UI at: http://localhost:3031
 Access Qdrant dashboard at: http://localhost:6333/dashboard
 
 ## Environment Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `LLM_PROVIDER` | `openai` | LLM provider: `openai` or `openrouter` |
-| `OPENAI_API_KEY` | (required) | OpenAI API key |
-| `OPENAI_MODEL` | `gpt-5-mini` | Model to use |
-| `OPENROUTER_API_KEY` | (optional) | OpenRouter API key |
-| `OPENROUTER_MODEL` | `openai/gpt-4o-mini` | OpenRouter model identifier |
-| `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | OpenRouter API base URL |
-| `STARK_CACHE_DIR` | *(unset)* | Override local cache path for downloads + benchmark outputs |
-| `POSTGRES_HOST` | `localhost` | PostgreSQL host |
-| `POSTGRES_PORT` | `5432` | PostgreSQL port |
-| `POSTGRES_DB` | `stark_prime` | PostgreSQL database |
-| `POSTGRES_USER` | `stark` | PostgreSQL user |
-| `POSTGRES_PASSWORD` | `stark_password` | PostgreSQL password |
-| `FUSEKI_HOST` | `localhost` | Fuseki host |
-| `FUSEKI_PORT` | `3031` | Fuseki port |
-| `FUSEKI_DATASET` | `prime` | Fuseki dataset name |
-| `FUSEKI_ADMIN_PASSWORD` | `admin` | Fuseki admin password |
-| `QDRANT_HOST` | `localhost` | Qdrant host |
-| `QDRANT_PORT` | `6333` | Qdrant port |
-| `QDRANT_COLLECTION` | `stark_entities` | Qdrant collection (default index) |
-| `QDRANT_COLLECTION_FULL` | `stark_entities_full` | Qdrant collection (full index) |
-| `LANGFUSE_ENABLED` | `true` | Enable Langfuse tracing |
-| `LANGFUSE_SECRET_KEY` | - | Langfuse secret key |
-| `LANGFUSE_PUBLIC_KEY` | - | Langfuse public key |
-| `LANGFUSE_BASE_URL` | `https://cloud.langfuse.com` | Langfuse base URL |
+| Variable                            | Default                                  | Description                                                                     |
+| ----------------------------------- | ---------------------------------------- | ------------------------------------------------------------------------------- |
+| `LLM_PROVIDER`                      | `openai`                                 | LLM provider: `openai` or `openrouter`                                          |
+| `OPENAI_API_KEY`                    | (required)                               | OpenAI API key                                                                  |
+| `OPENAI_MODEL`                      | `gpt-5-mini`                             | Model to use                                                                    |
+| `OPENROUTER_API_KEY`                | (optional)                               | OpenRouter API key                                                              |
+| `OPENROUTER_MODEL`                  | `openai/gpt-4o-mini`                     | OpenRouter model identifier                                                     |
+| `OPENROUTER_BASE_URL`               | `https://openrouter.ai/api/v1`           | OpenRouter API base URL                                                         |
+| `STARK_CACHE_DIR`                   | _(unset)_                                | Override local cache path for downloads + benchmark outputs                     |
+| `POSTGRES_HOST`                     | `localhost`                              | PostgreSQL host                                                                 |
+| `POSTGRES_PORT`                     | `5432`                                   | PostgreSQL port                                                                 |
+| `POSTGRES_DB`                       | `stark_prime`                            | PostgreSQL database                                                             |
+| `POSTGRES_USER`                     | `stark`                                  | PostgreSQL user                                                                 |
+| `POSTGRES_PASSWORD`                 | `stark_password`                         | PostgreSQL password                                                             |
+| `FUSEKI_HOST`                       | `localhost`                              | Fuseki host                                                                     |
+| `FUSEKI_PORT`                       | `3031`                                   | Fuseki port                                                                     |
+| `FUSEKI_DATASET`                    | `prime`                                  | Fuseki dataset name                                                             |
+| `FUSEKI_ADMIN_PASSWORD`             | `admin`                                  | Fuseki admin password                                                           |
+| `QDRANT_HOST`                       | `localhost`                              | Qdrant host                                                                     |
+| `QDRANT_PORT`                       | `6333`                                   | Qdrant port                                                                     |
+| `QDRANT_COLLECTION`                 | `stark_entities`                         | Qdrant collection (default index)                                               |
+| `QDRANT_COLLECTION_FULL`            | `stark_entities_full`                    | Qdrant collection (full index)                                                  |
+| `EMBEDDING_PROVIDER`                | `openai`                                 | Embedding provider: `openai`, `openrouter`, `huggingface`, `azure`, or `cohere` |
+| `EMBEDDING_MODEL`                   | `text-embedding-3-small`                 | Embedding model (provider-specific)                                             |
+| `EMBEDDING_BASE_URL`                | _(unset)_                                | Custom base URL for embeddings (self-hosted or proxy)                           |
+| `HUGGINGFACE_API_KEY`               | _(optional)_                             | HuggingFace API key (if using huggingface provider)                             |
+| `HUGGINGFACE_EMBEDDING_MODEL`       | `sentence-transformers/all-MiniLM-L6-v2` | HuggingFace embedding model                                                     |
+| `AZURE_OPENAI_API_KEY`              | _(optional)_                             | Azure OpenAI API key (if using azure provider)                                  |
+| `AZURE_OPENAI_ENDPOINT`             | _(optional)_                             | Azure OpenAI endpoint URL                                                       |
+| `AZURE_OPENAI_EMBEDDING_DEPLOYMENT` | _(optional)_                             | Azure OpenAI embedding deployment name                                          |
+| `COHERE_API_KEY`                    | _(optional)_                             | Cohere API key (if using cohere provider)                                       |
+| `COHERE_EMBEDDING_MODEL`            | `embed-english-v3`                       | Cohere embedding model                                                          |
+| `LANGFUSE_ENABLED`                  | `true`                                   | Enable Langfuse tracing                                                         |
+| `LANGFUSE_SECRET_KEY`               | -                                        | Langfuse secret key                                                             |
+| `LANGFUSE_PUBLIC_KEY`               | -                                        | Langfuse public key                                                             |
+| `LANGFUSE_BASE_URL`                 | `https://cloud.langfuse.com`             | Langfuse base URL                                                               |
+| `MLFLOW_ENABLED`                    | `false`                                  | Enable MLflow tracing (mutually exclusive with Langfuse)                        |
+| `DATABRICKS_HOST`                   | -                                        | Databricks workspace host                                                       |
+| `DATABRICKS_TOKEN`                  | -                                        | Databricks API token                                                            |
+| `MLFLOW_TRACKING_URI`               | `databricks`                             | MLflow tracking URI                                                             |
+| `MLFLOW_REGISTRY_URI`               | -                                        | MLflow registry URI (Unity Catalog)                                             |
+| `MLFLOW_EXPERIMENT_ID`              | -                                        | MLflow experiment ID                                                            |
 
 ## Observability with Langfuse
 
@@ -291,10 +335,49 @@ LANGFUSE_PUBLIC_KEY=pk-lf-...
 ### Viewing Traces
 
 Go to your Langfuse dashboard to see:
+
 - All agent runs with full conversation history
 - Query execution details
 - Performance metrics
 - Cost tracking
+
+## Observability with MLflow (Databricks)
+
+This project can send LangChain traces to a Databricks-hosted MLflow Tracking Server
+using `mlflow.langchain.autolog()`. MLflow and Langfuse are mutually exclusive; only
+enable one at a time.
+
+### Setup
+
+1. Generate a Databricks API token and copy the host URL
+2. Add these to your `.env` file:
+
+```env
+# Disable Langfuse when using MLflow
+LANGFUSE_ENABLED=false
+MLFLOW_ENABLED=true
+
+# Databricks + MLflow
+DATABRICKS_TOKEN=your_token
+DATABRICKS_HOST=https://adb-1234567890.0.azuredatabricks.net
+MLFLOW_TRACKING_URI=databricks
+MLFLOW_REGISTRY_URI=databricks-uc
+MLFLOW_EXPERIMENT_ID=123456789012345
+```
+
+### Viewing Traces
+
+Open the MLflow UI in your Databricks workspace and select the experiment ID you
+configured to view runs and traces.
+
+### Benchmark datasets
+
+When running `run-benchmark` with MLflow enabled, the benchmark uses MLflow evaluation
+datasets by name and creates a single MLflow Evaluation run that contains a trace for
+each dataset record. Each record must include:
+
+- `inputs.query`
+- `expectations.expected_entity_ids`
 
 ## License
 

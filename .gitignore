@@ -1,5 +1,6 @@
 # Data directory (downloaded/generated)
 data/
+benchmark_runs*
 
 .DS_Store
 

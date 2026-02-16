@@ -15,9 +15,21 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    command:
+      - "postgres"
+      - "-c" 
+      - "work_mem=256MB"           # Increase from 4MB to reduce temp file usage
+      - "-c"
+      - "temp_file_limit=1GB"      # Limit temp files per query to 1GB (fails query if exceeded)
+      - "-c"
+      - "shared_buffers=512MB"     # Increase shared buffer cache
+      - "-c"
+      - "effective_cache_size=2GB" # Help query planner make better decisions
 
   fuseki:
+    # Image is amd64-only; on Apple Silicon runs via emulation (Docker may warn).
     image: stain/jena-fuseki:latest
+    platform: linux/amd64
     container_name: stark-fuseki
     environment:
       ADMIN_PASSWORD: admin

@@ -249,6 +249,40 @@ class PostgresPrimeStore:
     def _create_unified_views(self) -> None:
         """Create unified views for cross-type queries."""
         with self.engine.connect() as conn:
+            # Use advisory lock to serialize view creation across processes
+            # Lock ID 12345 is arbitrary but unique for this operation
+            lock_acquired = conn.execute(text("SELECT pg_try_advisory_lock(12345)")).scalar()
+
+            if not lock_acquired:
+                # Another process is creating views, wait a bit and check if they exist
+                import time
+
+                time.sleep(1)
+
+            # Check if views already exist to avoid unnecessary DDL in multi-process scenarios
+            existing_views = {
+                row["table_name"]
+                for row in conn.execute(
+                    text("""
+                        SELECT table_name FROM information_schema.views 
+                        WHERE table_schema = 'public' 
+                        AND table_name IN ('all_nodes', 'all_nodes_raw', 'all_edges', 'all_edges_raw')
+                    """)
+                ).mappings()
+            }
+            if existing_views == {"all_nodes", "all_nodes_raw", "all_edges", "all_edges_raw"}:
+                # All views exist, skip creation
+                if lock_acquired:
+                    conn.execute(text("SELECT pg_advisory_unlock(12345)"))
+                # Views already exist - no DDL needed
+                return
+
+            # Log that we're creating views (this should happen rarely)
+            import os
+
+            print(
+                f"  [postgres_prime] Creating unified views (pid={os.getpid()}, lock={lock_acquired})"
+            )
 
             def _normalize_sql(col_expr: str) -> str:
                 """SQL expression to normalize a label like sanitize_table_name().
@@ -327,6 +361,10 @@ class PostgresPrimeStore:
                 )
 
             conn.commit()
+
+            # Release advisory lock if we acquired it
+            if lock_acquired:
+                conn.execute(text("SELECT pg_advisory_unlock(12345)"))
 
     def _create_indexes(self) -> None:
         """Create indexes for efficient querying."""
