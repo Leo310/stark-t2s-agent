@@ -13,7 +13,7 @@
       department: [ARDI],
       organization: [TU Berlin],
       location: [Berlin, Germany],
-      email: "haug@typst.app",
+      email: "heininger@tu-berlin.de",
     ),
     (
       name: "Nicolas Kohl",
