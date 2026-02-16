@@ -715,9 +715,9 @@ Based on our findings, we offer the following recommendations for practitioners 
 
 + *Use smaller models for structured-query agents*. GPT-5-mini achieves comparable or better F1 than GPT-5 at half the latency and cost.
 
-+ *Consider multi-tool agents for recall-critical applications*. Search+SQL+SPARQL achieves the highest Hit\@5 when comprehensive entity discovery matters more than precision.
++ *Avoid multi-tool agents*. Despite intuitive appeal, providing both SQL and SPARQL yields no significant benefit. The high item-level correlation ($r > 0.9$) indicates redundancy, and the combined agent's marginal Hit\@5 improvement (+2 pp) is not statistically significant given observed variance.
 
-+ *SPARQL is preferred but SQL is viable*. Choose based on infrastructure constraints rather than performance expectations.
++ *Choose one structured query language*. SPARQL slightly outperforms SQL (+2--3 pp F1), but the difference is modest. Select based on infrastructure constraints and team familiarity rather than expected retrieval quality.
 
 + *Implement result validation*. The "missed opportunity" failure mode suggests that explicit re-ranking or verification of intermediate results could improve final answer quality.
 
