@@ -67,7 +67,6 @@ series = {CHI EA '25}
       primaryClass={cs.CL},
       url={https://arxiv.org/abs/2312.10997}, 
 }
-
 @misc{singh2025agenticretrievalaugmentedgenerationsurvey,
       title={Agentic Retrieval-Augmented Generation: A Survey on Agentic RAG}, 
       author={Aditi Singh and Abul Ehtesham and Saket Kumar and Tala Talaei Khoei},
@@ -98,7 +97,10 @@ series = {CHI EA '25}
       url={https://arxiv.org/abs/2408.14717}, 
 }
 
-//gtp
+// Text-to-SQL ------
+
+
+
 
 @inproceedings{yu-etal-2025-tablerag,
     title = "{T}able{RAG}: A Retrieval Augmented Generation Framework for Heterogeneous Document Reasoning",
@@ -121,44 +123,409 @@ series = {CHI EA '25}
     abstract = "Retrieval-Augmented Generation (RAG) has demonstrated considerable effectiveness in open-domain question answering. However, when applied to heterogeneous documents, comprising both textual and tabular components, existing RAG approaches exhibit critical limitations. The prevailing practice of flattening tables and chunking strategies disrupts the intrinsic tabular structure, leads to information loss, and undermines the reasoning capabilities of LLMs in multi-hop, global queries. To address these challenges, we propose TableRAG, an SQL-based framework that unifies textual understanding and complex manipulations over tabular data. TableRAG iteratively operates in four steps: context-sensitive query decomposition, text retrieval, SQL programming and execution, and compositional intermediate answer generation. We also develop HeteQA, a novel benchmark designed to evaluate the multi-hop heterogeneous reasoning capabilities. Experimental results demonstrate that TableRAG consistently outperforms existing baselines on both public datasets and our HeteQA, establishing a new state-of-the-art for heterogeneous document question answering."
 }
 
-
-@article{si2025tabrag,
-  title         = {TabRAG: Tabular Document Retrieval via Structured Language Representations},
-  author        = {Si, Jacob and Qu, Mike and Lee, Michelle and Li, Yingzhen},
-  year          = {2025},
-  journal       = {arXiv preprint arXiv:2511.06582},
-  doi           = {10.48550/arXiv.2511.06582},
-  url           = {https://arxiv.org/abs/2511.06582},
-  eprint        = {2511.06582},
+@inproceedings{li2023bird,
+  title     = {Can {LLM} Already Serve as a Database Interface?
+               A Big Bench for Large-Scale Database Grounded
+               Text-to-{SQL}s},
+  author    = {Li, Jinyang and Hui, Binyuan and Qu, Ge and
+               Yang, Jiaxi and Li, Binhua and Li, Bowen and
+               Wang, Bailin and Qin, Bowen and Cao, Rongyu and
+               Geng, Ruiying and Huo, Nan and Zhou, Xuanhe and
+               Ma, Chenhao and Li, Guoliang and Chang, Kevin C.C. and
+               Huang, Fei and Cheng, Reynold and Li, Yongbin},
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
+  volume    = {36},
+  year      = {2023},
+  eprint    = {2305.03111},
   archivePrefix = {arXiv},
   primaryClass  = {cs.CL}
 }
 
-@article{zou2025trag,
-  title         = {RAG over Tables: Hierarchical Memory Index, Multi-Stage Retrieval, and Benchmarking},
-  author        = {Zou, Jiaru and Fu, Dongqi and Chen, Sirui and He, Xinrui and Li, Zihao and Zhu, Yada and Han, Jiawei and He, Jingrui},
-  year          = {2025},
-  journal       = {arXiv preprint arXiv:2504.01346},
-  doi           = {10.48550/arXiv.2504.01346},
-  url           = {https://arxiv.org/abs/2504.01346},
-  eprint        = {2504.01346},
+@article{patel2025semanticoperatorslotus,
+  title     = {Semantic Operators and Their Optimization: Enabling {LLM}-Based
+               Data Processing with Accuracy Guarantees in {LOTUS}},
+  author    = {Patel, Liana and Jha, Siddharth and Pan, Melissa and
+               Gupta, Harshit and Asawa, Parth and Guestrin, Carlos and
+               Zaharia, Matei},
+  journal   = {Proceedings of the VLDB Endowment},
+  volume    = {18},
+  number    = {11},
+  pages     = {4171--4184},
+  year      = {2025},
+  doi       = {10.14778/3749646.3749685}
+}
+
+@article{gao2023texttosql,
+  title     = {Text-to-{SQL} Empowered by Large Language Models:
+               A Benchmark Evaluation},
+  author    = {Gao, Dawei and Wang, Haibin and Li, Yaliang and
+               Sun, Xiuyu and Qian, Yichen and Ding, Bolin and
+               Zhou, Jingren},
+  journal   = {Proceedings of the VLDB Endowment},
+  volume    = {17},
+  number    = {5},
+  pages     = {1132--1145},
+  year      = {2024},
+  doi       = {10.14778/3641204.3641221},
+  note      = {Introduces DAIL-SQL}
+}
+
+@inproceedings{pourreza2023dinsql,
+  title     = {{DIN-SQL}: Decomposed In-Context Learning of Text-to-{SQL}
+               with Self-Correction},
+  author    = {Pourreza, Mohammadreza and Rafiei, Davood},
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
+  volume    = {36},
+  year      = {2023},
+  eprint    = {2304.11015},
   archivePrefix = {arXiv},
   primaryClass  = {cs.CL}
 }
 
-@article{sun2024sqlpalm,
-  title         = {{SQL}-{PaLM}: Improved Large Language Model Adaptation for Text-to-{SQL} (extended)},
-  author        = {Sun, Ruoxi and Arik, Sercan {\"O}. and Muzio, Alex and Miculicich, Lesly and Gundabathula, Satya and Yin, Pengcheng and Dai, Hanjun and Nakhost, Hootan and Sinha, Rajarishi and Wang, Zifeng and Pfister, Tomas},
-  year          = {2024},
-  journal       = {arXiv preprint arXiv:2306.00739},
-  doi           = {10.48550/arXiv.2306.00739},
-  url           = {https://arxiv.org/abs/2306.00739},
-  eprint        = {2306.00739},
+@inproceedings{li2023resdsql,
+  title     = {{RESDSQL}: Decoupling Schema Linking and Skeleton Parsing
+               for Text-to-{SQL}},
+  author    = {Li, Haoyang and Zhang, Jing and Li, Cuiping and Chen, Hong},
+  booktitle = {Proceedings of the AAAI Conference on Artificial Intelligence},
+  volume    = {37},
+  number    = {11},
+  pages     = {13067--13075},
+  year      = {2023},
+  doi       = {10.1609/aaai.v37i11.26535}
+}
+
+@article{li2024codes,
+  title     = {{CodeS}: Towards Building Open-source Language Models for
+               Text-to-{SQL}},
+  author    = {Li, Haoyang and Zhang, Jing and Liu, Hanbing and
+               Fan, Ju and Zhang, Xiaokang and Zhu, Jun and Wei, Renjie and
+               Pan, Hongyan and Li, Cuiping and Chen, Hong},
+  journal   = {Proceedings of the ACM on Management of Data},
+  volume    = {2},
+  number    = {3},
+  pages     = {1--28},
+  year      = {2024},
+  doi       = {10.1145/3654930}
+}
+
+@inproceedings{wang2018executionguideddecoding,
+  title     = {Execution-Guided Neural Program Decoding},
+  author    = {Wang, Bailin and Shin, Richard and Liu, Xiaodong and
+               Polozov, Oleksandr and Richardson, Matthew},
+  booktitle = {ICML Workshop on Neural Abstract Machines and
+               Program Induction (NAMPI)},
+  year      = {2018},
+  eprint    = {1807.03100},
   archivePrefix = {arXiv},
   primaryClass  = {cs.CL}
 }
 
-///gpt
+@article{hong2024nextgeneration,
+  title     = {Next-Generation Database Interfaces: A Survey of
+               {LLM}-Based Text-to-{SQL}},
+  author    = {Hong, Zijin and Yuan, Zheng and Zhang, Qinggang and
+               Chen, Hao and Dong, Junnan and Huang, Feiran and
+               Huang, Xiao},
+  journal   = {IEEE Transactions on Knowledge and Data Engineering},
+  volume    = {37},
+  pages     = {7328--7345},
+  year      = {2025},
+  doi       = {10.1109/TKDE.2025.3609486},
+  eprint    = {2406.08426},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.CL}
+}
+
+@inproceedings{scholak2021picard,
+  title     = {{PICARD}: Parsing Incrementally for Constrained
+               Auto-Regressive Decoding from Language Models},
+  author    = {Scholak, Torsten and Schucher, Nathan and Bahdanau, Dzmitry},
+  booktitle = {Proceedings of the 2021 Conference on Empirical Methods
+               in Natural Language Processing (EMNLP)},
+  year      = {2021},
+  doi       = {10.18653/v1/2021.emnlp-main.779},
+  eprint    = {2109.05093},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.CL}
+}
+
+@article{li2025omnisql,
+  title     = {{OmniSQL}: Synthesizing High-quality Text-to-{SQL}
+               Data at Scale},
+  author    = {Li, Haoyang and Wu, Shang and Zhang, Xiaokang and
+               Huang, Xinmei and Zhang, Jing and Jiang, Fuxin and
+               Wang, Shuai and Zhang, Tieying and Chen, Jianjun and
+               Shi, Rui and Chen, Hong and Li, Cuiping},
+  journal   = {Proceedings of the VLDB Endowment},
+  volume    = {18},
+  number    = {11},
+  pages     = {4695--4709},
+  year      = {2025},
+  doi       = {10.14778/3749646.3749723},
+  eprint    = {2503.02240},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.CL}
+}
+
+@inproceedings{yu2018spider,
+  title     = {Spider: A Large-Scale Human-Labeled Dataset for Complex
+               and Cross-Domain Semantic Parsing and Text-to-{SQL} Task},
+  author    = {Yu, Tao and Zhang, Rui and Yang, Kai and Yasunaga, Michihiro
+               and Wang, Dongxu and Li, Zifan and Ma, James and Li, Irene
+               and Yao, Qingning and Roman, Shanelle and Zhang, Zilin
+               and Radev, Dragomir},
+  booktitle = {Proceedings of the 2018 Conference on Empirical Methods
+               in Natural Language Processing (EMNLP)},
+  pages     = {3911--3921},
+  year      = {2018},
+  doi       = {10.18653/v1/D18-1425}
+}
+
+@inproceedings{cao2024rslsql,
+  title     = {{RSL-SQL}: Robust Schema Linking in Text-to-{SQL}
+               Generation},
+  author    = {Cao, Zhenbiao and Zheng, Yuanlei and Fan, Zhihao and
+               Zhang, Xiaojin and Chen, Wei and Bai, Xiang},
+  booktitle = {arXiv preprint},
+  year      = {2024},
+  eprint    = {2411.00073},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.DB}
+}
+
+@inproceedings{wang2022proton,
+  title     = {Proton: Probing Schema Linking Information from
+               Pre-trained Language Models for Text-to-{SQL} Parsing},
+  author    = {Wang, Lihan and Qin, Bowen and Hui, Binyuan and
+               Li, Bowen and Yang, Min and Wang, Bailin and
+               Li, Binhua and Huang, Fei and Si, Luo and Li, Yongbin},
+  booktitle = {Proceedings of the 28th ACM SIGKDD Conference on
+               Knowledge Discovery and Data Mining (KDD)},
+  pages     = {1889--1898},
+  year      = {2022},
+  doi       = {10.1145/3534678.3539305}
+}
+
+@inproceedings{cai2021sadga,
+  title     = {{SADGA}: Structure-Aware Dual Graph Aggregation Network
+               for Text-to-{SQL}},
+  author    = {Cai, Ruichu and Yuan, Jinjie and Xu, Boyan and
+               Hao, Zhifeng},
+  booktitle = {Advances in Neural Information Processing Systems
+               (NeurIPS)},
+  volume    = {34},
+  year      = {2021}
+}
+
+@inproceedings{glass2025extractive,
+  title     = {Extractive Schema Linking for Text-to-{SQL}},
+  author    = {Glass, Michael and Eyceoz, Mustafa and
+               Subramanian, Dharmashankar and Rossiello, Gaetano and
+               Vu, Long and Gliozzo, Alfio},
+  booktitle = {arXiv preprint},
+  year      = {2025},
+  eprint    = {2501.17174},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.DB}
+}
+
+@article{liu2024surveytexttosql,
+  title     = {A Survey of Text-to-{SQL} in the Era of {LLMs}:
+               Where Are We, and Where Are We Going?},
+  author    = {Liu, Xinyu and Shen, Shuyu and Li, Boyan and Ma, Peixian
+               and Jiang, Runzhi and Zhang, Yuxin and Fan, Ju and
+               Li, Guoliang and Tang, Nan and Luo, Yuyu},
+  journal   = {IEEE Transactions on Knowledge and Data Engineering},
+  volume    = {37},
+  pages     = {5735--5754},
+  year      = {2025},
+  doi       = {10.1109/TKDE.2025.3592032}
+}
+
+// Text-to-SPARQL ------
+
+@misc{ko2025cooprag,
+  title     = {Cooperative Retrieval-Augmented Generation for Question
+               Answering: Mutual Information Exchange and Ranking by
+               Contrasting Layers},
+  author    = {Ko, Youmin and Seo, Sungjong and Kim, Hyunjoon},
+  year      = {2025},
+  eprint    = {2512.10422},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.CL}
+}
+
+@inproceedings{reif2024chatbotontology,
+  title     = {Chatbot-Based Ontology Interaction Using Large Language
+               Models and Domain-Specific Standards},
+  author    = {Reif, Jonathan and Jeleniewski, Tom and Gill, Milapji Singh
+               and Gehlhoff, Felix and Fay, Alexander},
+  booktitle = {IEEE International Conference on Emerging Technologies
+               and Factory Automation (ETFA)},
+  year      = {2024},
+  doi       = {10.1109/ETFA61755.2024.10711065},
+  eprint    = {2408.00800},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.IR}
+}
+
+@article{rasheed2025domainspecific,
+  title     = {{LLM}-Based Natural Language to {SPARQL} Translation over
+               Domain-Specific Knowledge Graph},
+  author    = {Rasheed, Mohammed H. and Aguado, M.},
+  journal   = {Knowledge Organization},
+  year      = {2025},
+  doi       = {10.31083/ko42705}
+}
+
+@article{hernandezcamero2025aviation,
+  title     = {Context-Aware Few-Shot Learning {SPARQL} Query Generation
+               from Natural Language on an Aviation Knowledge Graph},
+  author    = {Hernandez-Camero, Ines-Virginia and
+               Garc{\'i}a-L{\'o}pez, Eva and Garcia-Cabot, Antonio and
+               Caro-{\'A}lvaro, S.},
+  journal   = {Machine Learning and Knowledge Extraction},
+  volume    = {7},
+  number    = {2},
+  pages     = {52},
+  year      = {2025},
+  doi       = {10.3390/make7020052}
+}
+
+@inproceedings{kosten2023spider4sparql,
+  title     = {Spider4SPARQL: A Complex Benchmark for Evaluating
+               Knowledge Graph Question Answering Systems},
+  author    = {Kosten, Catherine and Cudr{\'e}-Mauroux, Philippe and
+               Stockinger, Kurt},
+  booktitle = {IEEE International Conference on Big Data},
+  year      = {2023},
+  doi       = {10.1109/BigData59044.2023.10386182},
+  eprint    = {2309.16248},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.CL}
+}
+
+@article{kosten2025promptengineering,
+  title     = {Evaluating the Effectiveness of Prompt Engineering for
+               Knowledge Graph Question Answering},
+  author    = {Kosten, Catherine and Nooralahzadeh, Farhad and
+               Stockinger, Kurt},
+  journal   = {Frontiers in Artificial Intelligence},
+  volume    = {7},
+  year      = {2025},
+  doi       = {10.3389/frai.2024.1454258}
+}
+
+@inproceedings{jiang2025ontoscprompt,
+  title     = {Ontology-Guided, Hybrid Prompt Learning for Generalization
+               in Knowledge Graph Question Answering},
+  author    = {Jiang, Longquan and Huang, Junbo and Moller, Cedric and
+               Usbeck, Ricardo},
+  booktitle = {IEEE International Conference on Semantic Computing (ICSC)},
+  year      = {2025},
+  doi       = {10.1109/ICSC64641.2025.00010},
+  eprint    = {2502.03992},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.CL}
+}
+
+@inproceedings{walter2025grasp,
+  title     = {{GRASP}: Generic Reasoning And {SPARQL} Generation
+               across Knowledge Graphs},
+  author    = {Walter, Sebastian and Bast, Hannah},
+  booktitle = {The Semantic Web -- ISWC 2025},
+  series    = {LNCS},
+  volume    = {16140},
+  pages     = {271--289},
+  year      = {2025},
+  doi       = {10.1007/978-3-032-09527-5_15},
+  eprint    = {2507.08107},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.CL}
+}
+
+@inproceedings{pan2025firesparql,
+  title     = {{FIRESPARQL}: A {LLM}-based Framework for {SPARQL} Query
+               Generation over Scholarly Knowledge Graphs},
+  author    = {Pan, Xueli and de Boer, Viktor and van Ossenbruggen, Jacco},
+  booktitle = {IC3K},
+  year      = {2025},
+  doi       = {10.5220/0013774000004000},
+  eprint    = {2508.10467},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.CL}
+}
+
+@inproceedings{arazzi2025sparqllm,
+  title     = {Augmented Knowledge Graph Querying leveraging {LLMs}},
+  author    = {Arazzi, Marco and Ligari, Davide and Nicolazzo, Serena and
+               Nocera, Antonino},
+  booktitle = {International Joint Conference on Neural Networks (IJCNN)},
+  year      = {2025},
+  doi       = {10.1109/IJCNN64981.2025.11229060},
+  eprint    = {2502.01298},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.CL}
+}
+
+@inproceedings{avila2025fewshotrag,
+  title     = {Few-Shot Learning or {RAG} in {LLM}-Based Text-to-{SPARQL}?
+               Why Not Both?},
+  author    = {Avila, Caio Viktor S. and Vidal, V{\^a}nia and
+               Franco, Wellington and Casanova, Marco A.},
+  booktitle = {IEEE International Conference on Semantic Computing (ICSC)},
+  year      = {2025},
+  doi       = {10.1109/ICSC64641.2025.00016}
+}
+
+@misc{shen2024gear,
+  title     = {{GeAR}: Graph-enhanced Agent for Retrieval-Augmented
+               Generation},
+  author    = {Shen, Zhili and Diao, Chenxin and Vougiouklis, Pavlos and
+               Merita, Pascual and Piramanayagam, Shriram and
+               Graux, Damien and Tu, Dandan and Jiang, Zeren and
+               Lai, Ruofei and Ren, Yang and Pan, Jeff Z.},
+  year      = {2024},
+  eprint    = {2412.18431},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.CL}
+}
+
+@inproceedings{xu2025anchorrag,
+  title     = {Towards Open-World Retrieval-Augmented Generation on
+               Knowledge Graph: A Multi-Agent Collaboration Framework},
+  author    = {Xu, Jiasheng and Li, Mingda and Tang, Yongqiang and
+               Wang, Peijie and Zhang, Wensheng},
+  booktitle = {Proceedings of the ACM Web Conference (WWW)},
+  year      = {2025},
+  doi       = {10.1145/3774904.3792389},
+  eprint    = {2509.01238},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.AI}
+}
+
+@inproceedings{agarwal2024symkgqa,
+  title     = {{SymKGQA}: Few-Shot Knowledge Graph Question Answering via
+               Symbolic Program Generation and Execution},
+  author    = {Agarwal, Prerna and Kumar, Nishant and Bedathur, Srikanta J.},
+  booktitle = {Proceedings of the 62nd Annual Meeting of the Association
+               for Computational Linguistics (ACL)},
+  year      = {2024},
+  doi       = {10.18653/v1/2024.acl-long.545}
+}
+
+@misc{emonet2024federatedsparql,
+  title     = {{LLM}-based {SPARQL} Query Generation from Natural Language
+               over Federated Knowledge Graphs},
+  author    = {Emonet, Vincent and Bolleman, Jerven T. and
+               Duvaud, S{\'e}verine and Farias, Tarc{\'i}sio Mendes de and
+               Sima, Ana Claudia},
+  year      = {2024},
+  eprint    = {2410.06062},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.CL}
+}
+
 
 @misc{deng2025unstructureddataanalysisusing,
       title={Unstructured Data Analysis using LLMs: A Comprehensive Benchmark}, 
@@ -196,6 +563,20 @@ series = {WWW '25}
       archivePrefix={arXiv},
       primaryClass={cs.CL},
       url={https://arxiv.org/abs/2505.23628}, 
+}
+
+@inproceedings{wu2024avatar,
+  title     = {{AvaTaR}: Optimizing {LLM} Agents for Tool Usage via
+               Contrastive Reasoning},
+  author    = {Wu, Shirley and Zhao, Shiyu and Huang, Qian and
+               Huang, Kexin and Yasunaga, Michihiro and Cao, Kaidi and
+               Ioannidis, Vassilis N. and Subbian, Karthik and
+               Leskovec, Jure and Zou, James},
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
+  year      = {2024},
+  eprint    = {2406.11200},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.LG}
 }
 
 @inproceedings{stark2024,
