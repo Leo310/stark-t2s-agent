@@ -117,12 +117,18 @@ Heterogeneous multi-agent systems (e.g., Salve et al., 2024; Liu et al., 2025) c
 
 = Approach <sec:approach>
 
+#figure(
+  placement: top,
+  scope: "parent",
+  image("agent_loop.png", width: 100%),
+  caption: [Agent loop and system components.],
+) <fig:agent-loop>
+
 We present an agentic retrieval system for the STaRK-Prime knowledge base #cite(<stark2024>)---a biomedical knowledge graph derived from PrimeKG #cite(<chandak2023primekg>) containing over 129,000 entities across 10 types (diseases, drugs, genes/proteins, pathways, biological processes, molecular functions, cellular components, anatomical structures, exposures, and phenotypes) connected by 18 relation types. Our architecture combines semantic vector search with schema-bound query execution, enabling systematic comparison of retrieval strategies: pure semantic search versus structured querying via @SQL and @SPARQL.
 
 == System Architecture <sec:architecture>
-(WTH include diagram)
 
-Our system follows the @aRAG paradigm, employing an autonomous agent loop as the core reasoning mechanism. The agent iteratively reasons about the user's query, selects appropriate tools, executes them, and refines its approach based on intermediate results. This loop continues until the agent determines it has gathered sufficient information to answer the query or reaches a predefined iteration limit of 15 steps---a safeguard against infinite loops when the agent repeatedly fails to find relevant entities or formulates unsuccessful queries.
+Our system follows the @aRAG paradigm, employing an autonomous agent loop as the core reasoning mechanism (see @fig:agent-loop). The agent iteratively reasons about the user's query, selects appropriate tools, executes them, and refines its approach based on intermediate results. This loop continues until the agent determines it has gathered sufficient information to answer the query or reaches a predefined iteration limit of 15 steps---a safeguard against infinite loops when the agent repeatedly fails to find relevant entities or formulates unsuccessful queries.
 
 The architecture comprises three components:
 
@@ -332,6 +338,7 @@ Let $Y$ denote the gold entity set and $hat(Y)$ the predicted entity set. We rep
     [*Method*], [*Hit\@1*], [*Hit\@5*], [*R\@20*], [*MRR*],
     table.hline(stroke: 0.75pt),
 
+    [AvaTaR (GPT-4-turbo)], [0.330], [0.514], [0.533], [0.410],
     [Claude3 Reranker], [0.286], [0.469], [0.416], [0.363],
     [GPT4 Reranker], [0.286], [0.449], [0.416], [0.348],
     [GritLM-7b], [0.255], [0.418], [0.481], [0.343],
@@ -455,11 +462,11 @@ Let $Y$ denote the gold entity set and $hat(Y)$ the predicted entity set. We rep
 
 === Comparison to STaRK Baselines
 
-Our agentic approaches substantially outperform all STaRK baselines. The best baseline, Claude3 Reranker, achieves Hit\@1=0.286, Hit\@5=0.469, and MRR=0.363. In comparison, our Search+SPARQL agent with GPT-5 achieves Hit\@1=0.485 (+19.9 pp), Hit\@5=0.584 (+11.5 pp), and MRR=0.522 (+15.9 pp). Even our Search-Only agent with GPT-5-mini matches or exceeds the best baselines on Hit\@5 (0.420 vs. 0.469) while achieving higher MRR (0.372 vs. 0.363).
+Our agentic approaches substantially outperform all STaRK baselines. The best baseline, AvaTaR (GPT-4-turbo), achieves Hit\@1=0.330, Hit\@5=0.514, and MRR=0.410. In comparison, our Search+SPARQL agent with GPT-5 achieves Hit\@1=0.485 (+15.5 pp), Hit\@5=0.584 (+7.0 pp), and MRR=0.522 (+11.2 pp).
 
-STaRK baselines also report Recall\@20 (R\@20), ranging from 0.416 (Claude3 Reranker) to 0.481 (GritLM-7b). This metric is not directly comparable to our set-based Recall because STaRK baselines return ranked lists of 20 candidates, whereas our agents return variable-sized answer sets (typically 1--5 entities). Our agents' set-based Recall (0.31--0.48) reflects what fraction of gold entities appear in the _final answer_, not in a candidate pool.
+STaRK baselines also report Recall\@20 (R\@20), ranging from 0.416 (Claude3 Reranker) to 0.533 (AvaTaR). This metric is not directly comparable to our set-based Recall because STaRK baselines return ranked lists of 20 candidates, whereas our agents return variable-sized answer sets (typically 1--5 entities). Our agents' set-based Recall (0.31--0.48) reflects what fraction of gold entities appear in the _final answer_, not in a candidate pool.
 
-This improvement is notable because STaRK baselines include strong retrieval methods: Claude3 and GPT4 rerankers, state-of-the-art dense retrievers (GritLM-7b), and OpenAI embeddings (multi-ada-002). The agentic approach---iteratively searching, reasoning, and querying---provides a qualitative advantage over single-shot retrieval, even before adding structured query capabilities.
+This improvement is notable because STaRK baselines include strong retrieval methods: AvaTaR (an agentic retrieval approach), Claude3 and GPT4 rerankers, state-of-the-art dense retrievers (GritLM-7b), and OpenAI embeddings (multi-ada-002). Our agentic approach with structured query capabilities provides a qualitative advantage over these methods, including AvaTaR which also uses iterative tool-based retrieval.
 
 === Structured vs. Unstructured Retrieval
 
@@ -533,7 +540,7 @@ We now interpret the experimental results, identify failure modes through item-l
 
 == Structured Query Generation as the Key Advantage <sec:discussion-structured>
 
-The dominant finding is that agentic access to structured query interfaces (SPARQL or SQL) substantially outperforms both pure semantic retrieval and all STaRK baselines. Our Search+SPARQL agent with GPT-5 achieves Hit\@1=0.485 and MRR=0.522, compared to the best STaRK baseline (Claude3 Reranker) at Hit\@1=0.286 and MRR=0.363---improvements of +19.9 pp and +15.9 pp respectively. The +15.5 pp F1 improvement of Search+SPARQL over Search-Only (with GPT-5-mini) represents a qualitative capability gap, not merely incremental improvement.
+The dominant finding is that agentic access to structured query interfaces (SPARQL or SQL) substantially outperforms both pure semantic retrieval and all STaRK baselines. Our Search+SPARQL agent with GPT-5 achieves Hit\@1=0.485 and MRR=0.522, compared to the best STaRK baseline (AvaTaR with GPT-4-turbo) at Hit\@1=0.330 and MRR=0.410---improvements of +15.5 pp and +11.2 pp respectively. The +15.5 pp F1 improvement of Search+SPARQL over Search-Only (with GPT-5-mini) represents a qualitative capability gap, not merely incremental improvement.
 
 This confirms and extends the central finding from the STaRK benchmark #cite(<stark2024>): embedding-based retrieval struggles with multi-hop relational queries that require joins across entity types, path traversals, or constraint filtering. The agentic paradigm---combining iterative reasoning with structured query execution---provides a path forward that pure retrieval methods cannot match.
 
@@ -876,3 +883,130 @@ This example illustrates the *incomplete result selection* failure mode:
 + *Filtering failure*: The agent correctly identified 95312 as the query entity but interpreted the question as asking only for the _parent_ disease, not the disease hierarchy. This represents a reasoning failure at the answer synthesis stage.
 
 + *Actionable improvement*: Explicit re-ranking or verification of intermediate results---checking whether discovered entities should be included in the final answer---could address this failure mode without improving entity resolution or query generation.
+
+== A.4 Agent System Prompt <sec:system-prompt>
+
+The following is the complete system prompt used for the Search+SQL+SPARQL agent configuration. This prompt is instantiated at runtime with the actual database schema and vocabulary information. The `{schema_and_vocab}` and `{max_rows}` placeholders are replaced at runtime with the actual database schema and query limits.
+
+#block(
+  breakable: true,
+  width: 100%,
+  inset: 8pt,
+  stroke: 0.5pt + gray,
+  radius: 4pt,
+  fill: luma(250),
+)[
+  #set text(size: 6.5pt)
+  #set par(justify: false)
+  ```
+  You are an expert biomedical knowledge base analyst. Your task is to answer
+  questions about diseases, drugs, genes/proteins, pathways, molecular functions,
+  and their relationships using the STaRK-Prime knowledge base.
+
+  ## Available Tools
+
+  You have access to THREE tools:
+
+  1. **search_entities_tool** - Semantic search to find entities by name/description
+     - Use this FIRST to resolve entity names to their IDs
+     - Handles synonyms, partial matches, and related terms
+     - Returns entity IDs that you can use in queries
+
+  2. **execute_sql_query_tool** - Execute SQL queries (PostgreSQL)
+      - Use AFTER finding entity IDs with search_entities_tool
+      - Best for aggregations, joins, and filtering
+
+  3. **execute_sparql_query_tool** - Execute SPARQL queries (Fuseki)
+      - Use AFTER finding entity IDs with search_entities_tool
+      - Best for path traversal and pattern matching
+
+  ## Two-Stage Query Process (IMPORTANT!)
+
+  **ALWAYS follow this two-stage approach:**
+
+  ### Stage 1: Entity Resolution
+  When a question mentions specific entities (diseases, drugs, genes, etc.):
+  1. Use `search_entities_tool` to find the entity IDs
+  2. Note the returned IDs for use in your query
+
+  Example: For "What genes are associated with both diabetes and hypertension?"
+  -> First: search_entities_tool("diabetes", "disease")
+           search_entities_tool("hypertension", "disease")
+  -> Get: diabetes ID 12345, hypertension ID 67890
+
+  ### Stage 2: Query Execution
+  Use the resolved entity IDs in your SQL or SPARQL query.
+
+  ## Exploration Strategy
+
+  ### Strategy 1: Queries without explicit entity mentions
+  Use `search_entities_tool` with the full question as the query and `top_k=15`.
+
+  ### Strategy 2: Queries with explicit entity mentions
+  1. Resolve each entity with `search_entities_tool` (use `entity_type` when obvious).
+  2. Proceed to query execution with the resolved IDs.
+
+  ### Strategy 3: Multi-entity or complex queries
+  1. Disambiguate all mentioned entities.
+  2. Explore neighborhoods of key entities with relevant filters.
+  3. Combine information from multiple exploration paths.
+
+  ## Query Language Selection
+
+  - **SQL** is better for: lookups, aggregations (COUNT, AVG, MAX), joins,
+    complex filters, questions asking "how many" or "list all"
+  - **SPARQL** is better for: path traversal, relationship exploration,
+    pattern matching, questions like "what is connected to X through Y"
+
+  ## Knowledge Base Schema
+
+  {schema_and_vocab}
+
+  ## Query Guidelines
+
+  1. **Entity Resolution First**: ALWAYS use search_entities_tool to find entity
+     IDs before querying. Do NOT try to match entity names with SQL LIKE or
+     SPARQL FILTER - use semantic search instead.
+  2. **Read-only only**: SQL must be SELECT-only; SPARQL must be read-only.
+  3. **Limit results**: Always use LIMIT {max_rows}.
+  4. **Be precise**: Use exact table/column names from the schema above.
+  5. **Handle errors**: If a query fails, analyze the error and try again.
+  6. **Node IDs are answers**: The benchmark expects node IDs (integers).
+
+  ## Answer Format
+
+  Output ONLY a JSON object with exactly two fields:
+  {"ids": [123, 456, 789], "reasoning": "Found 3 genes associated with diabetes"}
+
+  - The `ids` field must be an array of integers, empty array [] if no results
+  - The `reasoning` field must be a string explaining your process
+  - IDs preserve ranking order for Hit@1 and MRR metrics
+
+  ## Efficiency Guidelines
+
+  ### Parallelization
+  - Resolve multiple entities IN PARALLEL in ONE turn (max 4-5 searches)
+
+  ### Retry Limits
+  - Query errors: max 2 corrective attempts per query
+  - Zero-row results: max 2 query reformulations
+  - Hard cap: 6 tool rounds total. If reached, answer with best available IDs
+
+  ### Answer Strategy
+  - If a query returns 0 rows, adjust and retry (within retry limits)
+  - Partial results are valuable - report entity IDs even without relationship data
+
+  ## Query Examples
+
+  Example SQL workflow:
+  1. search_entities_tool("breast cancer", "disease") -> ID: 789
+  2. execute_sql_query_tool("SELECT dst_id FROM indication WHERE src_id = 789")
+
+  Example SPARQL workflow:
+  1. search_entities_tool("insulin", "gene_protein") -> ID: 456
+  2. execute_sparql_query_tool("PREFIX sp: <http://stark.stanford.edu/prime/>
+     SELECT ?related WHERE { sp:node/456 sp:associatedWith ?related } LIMIT 5")
+
+  Now answer the user's question using the two-stage approach.
+  ```
+]
