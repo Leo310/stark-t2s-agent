@@ -285,8 +285,7 @@ Access Qdrant dashboard at: http://localhost:6333/dashboard
 | `FUSEKI_ADMIN_PASSWORD`             | `admin`                                  | Fuseki admin password                                                           |
 | `QDRANT_HOST`                       | `localhost`                              | Qdrant host                                                                     |
 | `QDRANT_PORT`                       | `6333`                                   | Qdrant port                                                                     |
-| `QDRANT_COLLECTION`                 | `stark_entities`                         | Qdrant collection (default index)                                               |
-| `QDRANT_COLLECTION_FULL`            | `stark_entities_full`                    | Qdrant collection (full index)                                                  |
+| `QDRANT_COLLECTION`                 | `stark_entities_full`                    | Qdrant collection name                                                          |
 | `EMBEDDING_PROVIDER`                | `openai`                                 | Embedding provider: `openai`, `openrouter`, `huggingface`, `azure`, or `cohere` |
 | `EMBEDDING_MODEL`                   | `text-embedding-3-small`                 | Embedding model (provider-specific)                                             |
 | `EMBEDDING_BASE_URL`                | _(unset)_                                | Custom base URL for embeddings (self-hosted or proxy)                           |

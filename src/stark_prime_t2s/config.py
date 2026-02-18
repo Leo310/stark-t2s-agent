@@ -16,7 +16,9 @@ load_dotenv()
 # Override with STARK_CACHE_DIR if you want a different location.
 #
 # Default on macOS/Linux: ~/.cache/stark-t2s-agent
-CACHE_DIR = Path(os.getenv("STARK_CACHE_DIR", Path.home() / ".cache" / "stark-t2s-agent"))
+CACHE_DIR = Path(
+    os.getenv("STARK_CACHE_DIR", Path.home() / ".cache" / "stark-t2s-agent")
+)
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 PRIME_CACHE_DIR = CACHE_DIR / "prime"
@@ -146,8 +148,7 @@ FUSEKI_ADMIN_PASSWORD = os.getenv("FUSEKI_ADMIN_PASSWORD", "admin")
 # Qdrant vector database
 QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
 QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6333"))
-QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "stark_entities")
-QDRANT_COLLECTION_FULL = os.getenv("QDRANT_COLLECTION_FULL", "stark_entities_full")
+QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "stark_entities_full")
 
 # ---------------------------------------------------------------------------
 # Langfuse Observability (v3)

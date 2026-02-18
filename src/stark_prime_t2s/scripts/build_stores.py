@@ -10,7 +10,6 @@ from stark_prime_t2s.config import (
     FUSEKI_QUERY_URL,
     POSTGRES_URL,
     QDRANT_COLLECTION,
-    QDRANT_COLLECTION_FULL,
     QDRANT_HOST,
     QDRANT_PORT,
 )
@@ -225,7 +224,9 @@ def build_qdrant_index(
             }
         )
 
-    print(f"  Found {entities_with_rich_desc}/{len(entities)} entities with rich descriptions")
+    print(
+        f"  Found {entities_with_rich_desc}/{len(entities)} entities with rich descriptions"
+    )
 
     # Skip already processed entities if resuming
     if resume_from > 0:
@@ -264,12 +265,16 @@ def build_qdrant_index(
     # 500 entities × 8KB = ~4MB per batch (well under 32MB limit)
     batch_size = 500
     total_uploaded = 0
-    print(f"  Embedding and uploading {len(entities)} entities in batches of {batch_size}...")
+    print(
+        f"  Embedding and uploading {len(entities)} entities in batches of {batch_size}..."
+    )
 
     from tqdm import tqdm
 
     # Create progress bar for total entities
-    with tqdm(total=len(entities), desc="  Uploading to Qdrant", unit="entities") as pbar:
+    with tqdm(
+        total=len(entities), desc="  Uploading to Qdrant", unit="entities"
+    ) as pbar:
         for i in range(0, len(entities), batch_size):
             batch_entities = entities[i : i + batch_size]
 
@@ -342,15 +347,7 @@ def main():
         default=None,
         help=(
             "Target Qdrant collection name for the entity index. "
-            "Defaults to QDRANT_COLLECTION or QDRANT_COLLECTION_FULL when --qdrant-full is set."
-        ),
-    )
-    parser.add_argument(
-        "--qdrant-full",
-        action="store_true",
-        help=(
-            "Build a full-description Qdrant index in QDRANT_COLLECTION_FULL. "
-            "Does not overwrite the default collection unless --qdrant-collection is set."
+            "Defaults to QDRANT_COLLECTION."
         ),
     )
 
@@ -361,10 +358,11 @@ def main():
     print("=" * 60)
     print()
     print("Docker services:")
-    print(f"  PostgreSQL: {POSTGRES_URL.split('@')[1] if '@' in POSTGRES_URL else POSTGRES_URL}")
+    print(
+        f"  PostgreSQL: {POSTGRES_URL.split('@')[1] if '@' in POSTGRES_URL else POSTGRES_URL}"
+    )
     print(f"  Fuseki: {FUSEKI_QUERY_URL}")
     print(f"  Qdrant: {QDRANT_HOST}:{QDRANT_PORT}/{QDRANT_COLLECTION}")
-    print(f"  Qdrant (full): {QDRANT_HOST}:{QDRANT_PORT}/{QDRANT_COLLECTION_FULL}")
     print()
 
     # Download data
@@ -424,9 +422,9 @@ def main():
         print("-" * 40)
         try:
             collection_name = args.qdrant_collection
-            if args.qdrant_full and not collection_name:
-                collection_name = QDRANT_COLLECTION_FULL
-            build_qdrant_index(loader, force=args.force, collection_name=collection_name)
+            build_qdrant_index(
+                loader, force=args.force, collection_name=collection_name
+            )
         except Exception as e:
             print(f"  ERROR: Could not build Qdrant index: {e}")
             print("  Make sure Qdrant is running: docker-compose up -d qdrant")
