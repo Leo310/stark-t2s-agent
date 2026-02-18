@@ -24,7 +24,6 @@
     ),
   ),
   index-terms: ("Agentic RAG", "Knowledge Graphs", "Text-to-SQL", "Text-to-SPARQL", "Biomedical QA"),
-  bibliography: bibliography("refs.bib"),
   figure-supplement: [Fig.],
 )
 
@@ -740,6 +739,8 @@ Our study has several limitations that suggest directions for future work:
 We presented an agentic RAG system that combines semantic vector search with schema-bound query execution (SQL and SPARQL) over the STaRK-Prime biomedical knowledge graph. Through a controlled comparison of four agent configurations across two model scales and six repetitions, we established three main findings. First, structured query access provides a substantial advantage over pure semantic search (+15.5 pp F1), confirming that multi-hop relational queries exceed the capabilities of embedding-based retrieval. Second, SQL and SPARQL are largely redundant rather than complementary ($r > 0.9$ item-level correlation), with SPARQL holding a modest but consistent edge (+2--3 pp F1); practitioners should choose one query language based on infrastructure constraints rather than providing both. Third, the dominant bottleneck for structured-query agents is entity resolution, not LLM reasoning capacity: scaling from GPT-5-mini to GPT-5 yields minimal improvement when structured query tools are available, while 34.9% of queries fail due to incomplete entity coverage during semantic search.
 
 These results suggest that future work should prioritize improving entity resolution quality---through better embeddings, synonym expansion, or hybrid lexical-semantic retrieval---over more sophisticated query generation or larger language models. Extending this evaluation to additional domains, knowledge graph schemas, and open-source model families would further strengthen the generalizability of our findings.
+
+#bibliography("refs.bib")
 
 // =============================================================================
 // APPENDIX
