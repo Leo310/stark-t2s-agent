@@ -1,5 +1,6 @@
 """LangChain v1 agent for STaRK-Prime text-to-SQL/SPARQL with Langfuse v3 observability."""
 
+from dataclasses import dataclass
 from typing import Any
 
 from langchain.agents import create_agent
@@ -36,6 +37,12 @@ from stark_prime_t2s.tools.execute_query import (
     get_sparql_vocab_summary,
     get_sql_schema_summary,
 )
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+_BUILDING_ENTITY_INDEX_MSG = "Building entity index for semantic search..."
 
 
 SYSTEM_PROMPT_TEMPLATE = """You are an expert biomedical knowledge base analyst. Your task is to answer questions about diseases, drugs, genes/proteins, pathways, molecular functions, and their relationships using the STaRK-Prime knowledge base.
@@ -491,6 +498,11 @@ _mlflow_initialized = False
 
 
 def _report_observability_mode():
+    """Validate that only one observability backend is enabled.
+
+    Raises:
+        ValueError: If both LANGFUSE_ENABLED and MLFLOW_ENABLED are true.
+    """
     if LANGFUSE_ENABLED and MLFLOW_ENABLED:
         raise ValueError(
             "Observability misconfigured: LANGFUSE_ENABLED and MLFLOW_ENABLED cannot both be true."
@@ -703,6 +715,136 @@ def flush_langfuse():
 
 
 # ---------------------------------------------------------------------------
+# LLM Provider Configuration Helper
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class LLMProviderConfig:
+    """Configuration for an LLM provider."""
+
+    provider: str
+    model_name: str
+    api_key: str
+    base_url: str | None
+
+
+def _resolve_llm_provider(
+    model: str | None = None,
+    provider: str | None = None,
+) -> LLMProviderConfig:
+    """Resolve LLM provider configuration.
+
+    Args:
+        model: Optional model name override
+        provider: Optional provider override (defaults to LLM_PROVIDER config)
+
+    Returns:
+        LLMProviderConfig with resolved settings
+
+    Raises:
+        ValueError: If provider is unknown or API key is not set
+    """
+    resolved_provider = provider or LLM_PROVIDER
+
+    if resolved_provider == "openrouter":
+        if not OPENROUTER_API_KEY:
+            raise ValueError(
+                "OPENROUTER_API_KEY not set. Please set it in your .env file or environment."
+            )
+        return LLMProviderConfig(
+            provider=resolved_provider,
+            model_name=model or OPENROUTER_MODEL,
+            api_key=OPENROUTER_API_KEY,
+            base_url=OPENROUTER_BASE_URL,
+        )
+    elif resolved_provider == "openai":
+        if not OPENAI_API_KEY:
+            raise ValueError(
+                "OPENAI_API_KEY not set. Please set it in your .env file or environment."
+            )
+        return LLMProviderConfig(
+            provider=resolved_provider,
+            model_name=model or OPENAI_MODEL,
+            api_key=OPENAI_API_KEY,
+            base_url=None,
+        )
+    else:
+        raise ValueError(
+            f"Unknown LLM provider: {resolved_provider}. Use 'openai' or 'openrouter'."
+        )
+
+
+def _create_llm(
+    config: LLMProviderConfig,
+    temperature: float = 0.0,
+    **kwargs: Any,
+):
+    """Create a chat model from provider configuration.
+
+    Args:
+        config: LLM provider configuration
+        temperature: Model temperature (default 0.0)
+        **kwargs: Additional arguments passed to init_chat_model
+
+    Returns:
+        Initialized chat model
+    """
+    init_kwargs = {
+        "temperature": temperature,
+        "api_key": config.api_key,
+    }
+    if config.base_url:
+        init_kwargs["base_url"] = config.base_url
+    if "model_provider" not in kwargs:
+        init_kwargs["model_provider"] = "openai"
+    init_kwargs.update(kwargs)
+
+    return init_chat_model(config.model_name, **init_kwargs)
+
+
+def _init_agent_common(
+    model: str | None = None,
+    provider: str | None = None,
+    temperature: float = 0.0,
+    build_entity_index_on_start: bool = True,
+    log_ready: bool = True,
+    **kwargs: Any,
+) -> tuple[Any, LLMProviderConfig]:
+    """Common initialization for all agent types.
+
+    Args:
+        model: Optional model name override
+        provider: Optional provider override
+        temperature: Model temperature (default 0.0)
+        build_entity_index_on_start: Whether to build/load entity index
+        log_ready: Whether to print ready message
+        **kwargs: Additional arguments passed to init_chat_model
+
+    Returns:
+        Tuple of (llm, config) for agent creation
+    """
+    config = _resolve_llm_provider(model, provider)
+
+    _init_langfuse()
+    _init_mlflow()
+
+    if build_entity_index_on_start:
+        if log_ready:
+            print(_BUILDING_ENTITY_INDEX_MSG)
+        build_entity_index()
+
+    llm = _create_llm(config, temperature, **kwargs)
+
+    if log_ready:
+        print(
+            f"  Agent ready (provider: {config.provider}, model: {config.model_name})"
+        )
+
+    return llm, config
+
+
+# ---------------------------------------------------------------------------
 # Agent Creation
 # ---------------------------------------------------------------------------
 
@@ -771,72 +913,20 @@ def create_stark_prime_agent(
     Returns:
         A LangChain agent that can answer questions about STaRK-Prime.
     """
-    # Determine which provider to use and validate configuration
-    provider = kwargs.pop("provider", None) or LLM_PROVIDER
-
-    if provider == "openrouter":
-        if not OPENROUTER_API_KEY:
-            raise ValueError(
-                "OPENROUTER_API_KEY not set. Please set it in your .env file or environment."
-            )
-        api_key = OPENROUTER_API_KEY
-        base_url = OPENROUTER_BASE_URL
-        model_name = model or OPENROUTER_MODEL
-    elif provider == "openai":
-        if not OPENAI_API_KEY:
-            raise ValueError(
-                "OPENAI_API_KEY not set. Please set it in your .env file or environment."
-            )
-        api_key = OPENAI_API_KEY
-        base_url = None
-        model_name = model or OPENAI_MODEL
-    else:
-        raise ValueError(f"Unknown LLM provider: {provider}. Use 'openai' or 'openrouter'.")
-
-    _init_langfuse()
-    _init_mlflow()
-
-    # Build/load entity index for semantic search
-    if build_entity_index_on_start:
-        if log_ready:
-            print("Building entity index for semantic search...")
-        build_entity_index()
-
-    # Initialize the chat model
-    init_kwargs = {
-        "temperature": temperature,
-        "api_key": api_key,
-    }
-    if base_url:
-        init_kwargs["base_url"] = base_url
-    if "model_provider" not in kwargs:
-        init_kwargs["model_provider"] = "openai"
-    init_kwargs.update(kwargs)
-
-    llm = init_chat_model(
-        model_name,
-        **init_kwargs,
+    provider = kwargs.pop("provider", None)
+    llm, _ = _init_agent_common(
+        model, provider, temperature, build_entity_index_on_start, log_ready, **kwargs
     )
 
-    if log_ready:
-        print(f"  Agent ready (provider: {provider}, model: {model_name})")
-
-    # Get the tools (two-stage approach)
-    search_tool = get_search_entities_tool()
-    sql_query_tool = get_execute_sql_query_tool()
-    sparql_query_tool = get_execute_sparql_query_tool()
-
-    # Get the system prompt
-    system_prompt = get_system_prompt()
-
-    # Create the agent using LangChain v1's create_agent
-    agent = create_agent(
+    return create_agent(
         llm,
-        tools=[search_tool, sql_query_tool, sparql_query_tool],
-        system_prompt=system_prompt,
+        tools=[
+            get_search_entities_tool(),
+            get_execute_sql_query_tool(),
+            get_execute_sparql_query_tool(),
+        ],
+        system_prompt=get_system_prompt(),
     )
-
-    return agent
 
 
 def create_stark_prime_sql_agent(
@@ -847,64 +937,16 @@ def create_stark_prime_sql_agent(
     **kwargs: Any,
 ):
     """Create a LangChain agent that can only execute SQL queries."""
-    provider = kwargs.pop("provider", None) or LLM_PROVIDER
-
-    if provider == "openrouter":
-        if not OPENROUTER_API_KEY:
-            raise ValueError(
-                "OPENROUTER_API_KEY not set. Please set it in your .env file or environment."
-            )
-        api_key = OPENROUTER_API_KEY
-        base_url = OPENROUTER_BASE_URL
-        model_name = model or OPENROUTER_MODEL
-    elif provider == "openai":
-        if not OPENAI_API_KEY:
-            raise ValueError(
-                "OPENAI_API_KEY not set. Please set it in your .env file or environment."
-            )
-        api_key = OPENAI_API_KEY
-        base_url = None
-        model_name = model or OPENAI_MODEL
-    else:
-        raise ValueError(f"Unknown LLM provider: {provider}. Use 'openai' or 'openrouter'.")
-
-    _init_langfuse()
-    _init_mlflow()
-
-    if build_entity_index_on_start:
-        if log_ready:
-            print("Building entity index for semantic search...")
-        build_entity_index()
-
-    init_kwargs = {
-        "temperature": temperature,
-        "api_key": api_key,
-    }
-    if base_url:
-        init_kwargs["base_url"] = base_url
-    if "model_provider" not in kwargs:
-        init_kwargs["model_provider"] = "openai"
-    init_kwargs.update(kwargs)
-
-    llm = init_chat_model(
-        model_name,
-        **init_kwargs,
+    provider = kwargs.pop("provider", None)
+    llm, _ = _init_agent_common(
+        model, provider, temperature, build_entity_index_on_start, log_ready, **kwargs
     )
 
-    if log_ready:
-        print(f"  Agent ready (provider: {provider}, model: {model_name})")
-
-    search_tool = get_search_entities_tool()
-    query_tool = get_execute_sql_query_tool()
-    system_prompt = get_sql_only_system_prompt()
-
-    agent = create_agent(
+    return create_agent(
         llm,
-        tools=[search_tool, query_tool],
-        system_prompt=system_prompt,
+        tools=[get_search_entities_tool(), get_execute_sql_query_tool()],
+        system_prompt=get_sql_only_system_prompt(),
     )
-
-    return agent
 
 
 def create_stark_prime_sparql_agent(
@@ -915,64 +957,16 @@ def create_stark_prime_sparql_agent(
     **kwargs: Any,
 ):
     """Create a LangChain agent that can only execute SPARQL queries."""
-    provider = kwargs.pop("provider", None) or LLM_PROVIDER
-
-    if provider == "openrouter":
-        if not OPENROUTER_API_KEY:
-            raise ValueError(
-                "OPENROUTER_API_KEY not set. Please set it in your .env file or environment."
-            )
-        api_key = OPENROUTER_API_KEY
-        base_url = OPENROUTER_BASE_URL
-        model_name = model or OPENROUTER_MODEL
-    elif provider == "openai":
-        if not OPENAI_API_KEY:
-            raise ValueError(
-                "OPENAI_API_KEY not set. Please set it in your .env file or environment."
-            )
-        api_key = OPENAI_API_KEY
-        base_url = None
-        model_name = model or OPENAI_MODEL
-    else:
-        raise ValueError(f"Unknown LLM provider: {provider}. Use 'openai' or 'openrouter'.")
-
-    _init_langfuse()
-    _init_mlflow()
-
-    if build_entity_index_on_start:
-        if log_ready:
-            print("Building entity index for semantic search...")
-        build_entity_index()
-
-    init_kwargs = {
-        "temperature": temperature,
-        "api_key": api_key,
-    }
-    if base_url:
-        init_kwargs["base_url"] = base_url
-    if "model_provider" not in kwargs:
-        init_kwargs["model_provider"] = "openai"
-    init_kwargs.update(kwargs)
-
-    llm = init_chat_model(
-        model_name,
-        **init_kwargs,
+    provider = kwargs.pop("provider", None)
+    llm, _ = _init_agent_common(
+        model, provider, temperature, build_entity_index_on_start, log_ready, **kwargs
     )
 
-    if log_ready:
-        print(f"  Agent ready (provider: {provider}, model: {model_name})")
-
-    search_tool = get_search_entities_tool()
-    query_tool = get_execute_sparql_query_tool()
-    system_prompt = get_sparql_only_system_prompt()
-
-    agent = create_agent(
+    return create_agent(
         llm,
-        tools=[search_tool, query_tool],
-        system_prompt=system_prompt,
+        tools=[get_search_entities_tool(), get_execute_sparql_query_tool()],
+        system_prompt=get_sparql_only_system_prompt(),
     )
-
-    return agent
 
 
 def create_stark_prime_entity_resolver_agent(
@@ -983,63 +977,161 @@ def create_stark_prime_entity_resolver_agent(
     **kwargs: Any,
 ):
     """Create a LangChain agent that can only resolve entities via semantic search."""
-    provider = kwargs.pop("provider", None) or LLM_PROVIDER
-
-    if provider == "openrouter":
-        if not OPENROUTER_API_KEY:
-            raise ValueError(
-                "OPENROUTER_API_KEY not set. Please set it in your .env file or environment."
-            )
-        api_key = OPENROUTER_API_KEY
-        base_url = OPENROUTER_BASE_URL
-        model_name = model or OPENROUTER_MODEL
-    elif provider == "openai":
-        if not OPENAI_API_KEY:
-            raise ValueError(
-                "OPENAI_API_KEY not set. Please set it in your .env file or environment."
-            )
-        api_key = OPENAI_API_KEY
-        base_url = None
-        model_name = model or OPENAI_MODEL
-    else:
-        raise ValueError(f"Unknown LLM provider: {provider}. Use 'openai' or 'openrouter'.")
-
-    _init_langfuse()
-    _init_mlflow()
-
-    if build_entity_index_on_start:
-        if log_ready:
-            print("Building entity index for semantic search...")
-        build_entity_index()
-
-    init_kwargs = {
-        "temperature": temperature,
-        "api_key": api_key,
-    }
-    if base_url:
-        init_kwargs["base_url"] = base_url
-    if "model_provider" not in kwargs:
-        init_kwargs["model_provider"] = "openai"
-    init_kwargs.update(kwargs)
-
-    llm = init_chat_model(
-        model_name,
-        **init_kwargs,
+    provider = kwargs.pop("provider", None)
+    llm, _ = _init_agent_common(
+        model, provider, temperature, build_entity_index_on_start, log_ready, **kwargs
     )
 
-    if log_ready:
-        print(f"  Agent ready (provider: {provider}, model: {model_name})")
-
-    search_tool = get_search_entities_tool()
-    system_prompt = get_entity_only_system_prompt()
-
-    agent = create_agent(
+    return create_agent(
         llm,
-        tools=[search_tool],
-        system_prompt=system_prompt,
+        tools=[get_search_entities_tool()],
+        system_prompt=get_entity_only_system_prompt(),
     )
 
-    return agent
+
+# ---------------------------------------------------------------------------
+# Agent Invocation Helpers
+# ---------------------------------------------------------------------------
+
+
+def _build_agent_config(
+    trace_name: str | None = None,
+    session_id: str | None = None,
+    user_id: str | None = None,
+    tags: list[str] | None = None,
+) -> dict[str, Any]:
+    """Build configuration dict for agent invocation.
+
+    Args:
+        trace_name: Optional trace name for Langfuse
+        session_id: Optional session ID for Langfuse tracing
+        user_id: Optional user ID for Langfuse tracing
+        tags: Optional tags for Langfuse tracing
+
+    Returns:
+        Configuration dict with callbacks, metadata, and recursion limit
+    """
+    callbacks = get_callbacks()
+    config: dict[str, Any] = {}
+
+    if callbacks:
+        config["callbacks"] = callbacks
+        config["run_name"] = trace_name or "stark_prime_query"
+
+        # v3: Trace attributes go in metadata with 'langfuse_' prefix
+        metadata: dict[str, Any] = {}
+        if session_id:
+            metadata["langfuse_session_id"] = session_id
+        if user_id:
+            metadata["langfuse_user_id"] = user_id
+        if tags:
+            metadata["langfuse_tags"] = tags
+
+        if metadata:
+            config["metadata"] = metadata
+
+    # Set recursion limit to prevent runaway loops
+    config["recursion_limit"] = MAX_AGENT_ITERATIONS
+
+    return config
+
+
+def _extract_final_answer(
+    result: dict[str, Any],
+    include_iteration: bool = False,
+) -> tuple[str, list, list]:
+    """Extract final answer and tool calls from agent result.
+
+    Args:
+        result: The agent invocation result
+        include_iteration: Whether to include iteration numbers in tool calls
+
+    Returns:
+        Tuple of (final_answer, messages, tool_calls)
+    """
+    messages = result.get("messages", [])
+    final_answer = ""
+    tool_calls = []
+
+    # Track iterations: each AI message with tool_calls is one iteration
+    # All tools called in the same AI message are parallel (same iteration)
+    current_iteration = 0
+    pending_tool_call_ids: dict[str, int] = {}  # tool_call_id -> iteration
+    pending_tool_call_args: dict[str, dict] = {}  # tool_call_id -> args
+
+    for msg in messages:
+        if hasattr(msg, "content") and hasattr(msg, "type"):
+            if msg.type == "ai":
+                final_answer = msg.content
+                # Check if this AI message has tool calls (requests)
+                ai_tool_calls = getattr(msg, "tool_calls", None)
+                if ai_tool_calls:
+                    current_iteration += 1
+                    # Map each tool_call_id to this iteration and store args
+                    for tc in ai_tool_calls:
+                        tc_id = (
+                            tc.get("id")
+                            if isinstance(tc, dict)
+                            else getattr(tc, "id", None)
+                        )
+                        if tc_id:
+                            pending_tool_call_ids[tc_id] = current_iteration
+                            # Extract args from the tool call
+                            tc_args = (
+                                tc.get("args")
+                                if isinstance(tc, dict)
+                                else getattr(tc, "args", None)
+                            )
+                            if tc_args:
+                                pending_tool_call_args[tc_id] = tc_args
+            elif msg.type == "tool":
+                # Try to get args from the tool message first
+                call_args = getattr(msg, "tool_input", None)
+                if call_args is None:
+                    call_args = getattr(msg, "kwargs", None)
+                # Get the iteration and args from the pending tool call
+                tool_call_id = getattr(msg, "tool_call_id", None)
+                iteration = (
+                    pending_tool_call_ids.get(tool_call_id, current_iteration)
+                    if tool_call_id
+                    else current_iteration
+                )
+                # If we didn't get args from the message, get from pending
+                if call_args is None and tool_call_id:
+                    call_args = pending_tool_call_args.get(tool_call_id)
+
+                tool_call_entry = {
+                    "name": getattr(msg, "name", "unknown"),
+                    "content": (
+                        msg.content[:500] + "..."
+                        if len(msg.content) > 500
+                        else msg.content
+                    ),
+                    "input": call_args,
+                }
+                if include_iteration:
+                    tool_call_entry["iteration"] = iteration
+                tool_calls.append(tool_call_entry)
+
+    return final_answer, messages, tool_calls
+
+
+def _summarize_text(text: str | None, limit: int = 400) -> str:
+    """Summarize text for error reporting."""
+    if not text:
+        return "<empty>"
+    cleaned = text.replace("\n", " ").strip()
+    return cleaned if len(cleaned) <= limit else f"{cleaned[:limit]}..."
+
+
+def _summarize_messages(messages: list, limit: int = 3) -> list[str]:
+    """Summarize recent messages for error reporting."""
+    summaries: list[str] = []
+    for msg in messages[-limit:]:
+        msg_type = getattr(msg, "type", "unknown")
+        content = getattr(msg, "content", None)
+        summaries.append(f"{msg_type}:{_summarize_text(content, 120)}")
+    return summaries
 
 
 # ---------------------------------------------------------------------------
@@ -1068,72 +1160,7 @@ async def run_agent_query(
     Returns:
         Dict with 'node_ids', 'reasoning', 'messages', and 'tool_calls' keys
     """
-    # Build config with callbacks
-    callbacks = get_callbacks()
-    config: dict[str, Any] = {}
-
-    if callbacks:
-        config["callbacks"] = callbacks
-        config["run_name"] = trace_name or "stark_prime_query"
-
-        # v3: Trace attributes go in metadata with 'langfuse_' prefix
-        metadata: dict[str, Any] = {}
-        if session_id:
-            metadata["langfuse_session_id"] = session_id
-        if user_id:
-            metadata["langfuse_user_id"] = user_id
-        if tags:
-            metadata["langfuse_tags"] = tags
-
-        if metadata:
-            config["metadata"] = metadata
-
-    # Set recursion limit to prevent runaway loops
-    config["recursion_limit"] = MAX_AGENT_ITERATIONS
-
-    def _extract_final_answer(result: dict[str, Any]) -> tuple[str, list, list]:
-        messages = result.get("messages", [])
-        final_answer = ""
-        tool_calls = []
-        pending_tool_call_args: dict[str, dict] = {}  # tool_call_id -> args
-
-        for msg in messages:
-            if hasattr(msg, "content") and hasattr(msg, "type"):
-                if msg.type == "ai":
-                    final_answer = msg.content
-                    # Extract and store tool call args from AI message
-                    ai_tool_calls = getattr(msg, "tool_calls", None)
-                    if ai_tool_calls:
-                        for tc in ai_tool_calls:
-                            tc_id = (
-                                tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
-                            )
-                            tc_args = (
-                                tc.get("args")
-                                if isinstance(tc, dict)
-                                else getattr(tc, "args", None)
-                            )
-                            if tc_id and tc_args:
-                                pending_tool_call_args[tc_id] = tc_args
-                elif msg.type == "tool":
-                    call_args = getattr(msg, "tool_input", None)
-                    if call_args is None:
-                        call_args = getattr(msg, "kwargs", None)
-                    # If we didn't get args from the message, get from pending
-                    tool_call_id = getattr(msg, "tool_call_id", None)
-                    if call_args is None and tool_call_id:
-                        call_args = pending_tool_call_args.get(tool_call_id)
-                    tool_calls.append(
-                        {
-                            "name": getattr(msg, "name", "unknown"),
-                            "content": (
-                                msg.content[:500] + "..." if len(msg.content) > 500 else msg.content
-                            ),
-                            "input": call_args,
-                        }
-                    )
-
-        return final_answer, messages, tool_calls
+    config = _build_agent_config(trace_name, session_id, user_id, tags)
 
     max_attempts = 3
     for attempt in range(1, max_attempts + 1):
@@ -1181,104 +1208,7 @@ def run_agent_query_sync(
     Returns:
         Dict with 'node_ids', 'reasoning', 'messages', and 'tool_calls' keys
     """
-    # Build config with callbacks
-    callbacks = get_callbacks()
-    config: dict[str, Any] = {}
-
-    if callbacks:
-        config["callbacks"] = callbacks
-        config["run_name"] = trace_name or "stark_prime_query"
-
-        # v3: Trace attributes go in metadata with 'langfuse_' prefix
-        metadata: dict[str, Any] = {}
-        if session_id:
-            metadata["langfuse_session_id"] = session_id
-        if user_id:
-            metadata["langfuse_user_id"] = user_id
-        if tags:
-            metadata["langfuse_tags"] = tags
-
-        if metadata:
-            config["metadata"] = metadata
-
-    # Set recursion limit to prevent runaway loops
-    config["recursion_limit"] = MAX_AGENT_ITERATIONS
-
-    def _extract_final_answer(result: dict[str, Any]) -> tuple[str, list, list]:
-        messages = result.get("messages", [])
-        final_answer = ""
-        tool_calls = []
-
-        # Track iterations: each AI message with tool_calls is one iteration
-        # All tools called in the same AI message are parallel (same iteration)
-        current_iteration = 0
-        pending_tool_call_ids: dict[str, int] = {}  # tool_call_id -> iteration
-        pending_tool_call_args: dict[str, dict] = {}  # tool_call_id -> args
-
-        for msg in messages:
-            if hasattr(msg, "content") and hasattr(msg, "type"):
-                if msg.type == "ai":
-                    final_answer = msg.content
-                    # Check if this AI message has tool calls (requests)
-                    ai_tool_calls = getattr(msg, "tool_calls", None)
-                    if ai_tool_calls:
-                        current_iteration += 1
-                        # Map each tool_call_id to this iteration and store args
-                        for tc in ai_tool_calls:
-                            tc_id = (
-                                tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
-                            )
-                            if tc_id:
-                                pending_tool_call_ids[tc_id] = current_iteration
-                                # Extract args from the tool call
-                                tc_args = (
-                                    tc.get("args")
-                                    if isinstance(tc, dict)
-                                    else getattr(tc, "args", None)
-                                )
-                                if tc_args:
-                                    pending_tool_call_args[tc_id] = tc_args
-                elif msg.type == "tool":
-                    # Try to get args from the tool message first
-                    call_args = getattr(msg, "tool_input", None)
-                    if call_args is None:
-                        call_args = getattr(msg, "kwargs", None)
-                    # Get the iteration and args from the pending tool call
-                    tool_call_id = getattr(msg, "tool_call_id", None)
-                    iteration = (
-                        pending_tool_call_ids.get(tool_call_id, current_iteration)
-                        if tool_call_id
-                        else current_iteration
-                    )
-                    # If we didn't get args from the message, get from pending
-                    if call_args is None and tool_call_id:
-                        call_args = pending_tool_call_args.get(tool_call_id)
-                    tool_calls.append(
-                        {
-                            "name": getattr(msg, "name", "unknown"),
-                            "content": (
-                                msg.content[:500] + "..." if len(msg.content) > 500 else msg.content
-                            ),
-                            "input": call_args,
-                            "iteration": iteration,
-                        }
-                    )
-
-        return final_answer, messages, tool_calls
-
-    def _summarize_text(text: str | None, limit: int = 400) -> str:
-        if not text:
-            return "<empty>"
-        cleaned = text.replace("\n", " ").strip()
-        return cleaned if len(cleaned) <= limit else f"{cleaned[:limit]}..."
-
-    def _summarize_messages(messages: list, limit: int = 3) -> list[str]:
-        summaries: list[str] = []
-        for msg in messages[-limit:]:
-            msg_type = getattr(msg, "type", "unknown")
-            content = getattr(msg, "content", None)
-            summaries.append(f"{msg_type}:{_summarize_text(content, 120)}")
-        return summaries
+    config = _build_agent_config(trace_name, session_id, user_id, tags)
 
     max_attempts = 3
     for attempt in range(1, max_attempts + 1):
@@ -1287,7 +1217,9 @@ def run_agent_query_sync(
             config=config,
         )
 
-        final_answer, messages, tool_calls = _extract_final_answer(result)
+        final_answer, messages, tool_calls = _extract_final_answer(
+            result, include_iteration=True
+        )
 
         try:
             structured = _parse_structured_output(final_answer)

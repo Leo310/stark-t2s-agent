@@ -378,6 +378,62 @@ each dataset record. Each record must include:
 - `inputs.query`
 - `expectations.expected_entity_ids`
 
+## Python API
+
+Use the agent programmatically in your own code:
+
+```python
+from stark_prime_t2s.agent import create_stark_prime_agent
+
+# Create agent (builds entity index on first run)
+agent = create_stark_prime_agent(model="gpt-5-mini")
+
+# Run a query (async)
+import asyncio
+from stark_prime_t2s.agent.agent import run_agent_query
+
+async def main():
+    result = await run_agent_query(agent, "What drugs treat Alzheimer's disease?")
+    print(result["answer"])
+    print(result["entity_ids"])  # List of resolved entity IDs
+
+asyncio.run(main())
+```
+
+### Available Agent Factories
+
+| Function                                     | Description                                  |
+| -------------------------------------------- | -------------------------------------------- |
+| `create_stark_prime_agent()`                 | Full agent with SQL + SPARQL + entity search |
+| `create_stark_prime_sql_agent()`             | SQL-only agent                               |
+| `create_stark_prime_sparql_agent()`          | SPARQL-only agent                            |
+| `create_stark_prime_entity_resolver_agent()` | Entity search only (no query execution)      |
+
+### Direct Tool Access
+
+```python
+from stark_prime_t2s.tools.entity_resolver import search_entities
+from stark_prime_t2s.tools.execute_query import execute_sql_query, execute_sparql_query
+
+# Search for entities
+result = search_entities("diabetes", entity_type="disease", top_k=5)
+for entity in result.entities:
+    print(f"{entity['name']} (ID: {entity['id']})")
+
+# Execute SQL query
+sql_result = execute_sql_query("SELECT * FROM disease WHERE id = 28780")
+print(sql_result.to_string())
+
+# Execute SPARQL query
+sparql_result = execute_sparql_query("""
+    PREFIX sp: <http://stark.stanford.edu/prime/>
+    SELECT ?drug WHERE {
+        ?drug sp:indication <http://stark.stanford.edu/prime/node/28780> .
+    }
+""")
+print(sparql_result.to_string())
+```
+
 ## License
 
 MIT License. STaRK-Prime dataset is licensed under CC-BY-4.0.

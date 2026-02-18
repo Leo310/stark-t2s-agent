@@ -35,6 +35,92 @@ from stark_prime_t2s.config import (
 )
 
 
+# ---------------------------------------------------------------------------
+# Common Helpers
+# ---------------------------------------------------------------------------
+
+# Metric names used for averaging
+_METRIC_NAMES = ("precision", "recall", "f1", "exact_match", "hit@1", "hit@5", "mrr")
+
+
+def _avg(values: list[float]) -> float:
+    """Compute average of a list of values."""
+    return sum(values) / len(values) if values else 0.0
+
+
+def _compute_avg_metrics(item_metrics: list[dict[str, float]]) -> dict[str, float]:
+    """Compute average metrics from a list of per-item metrics."""
+    return {
+        f"avg_{name}": _avg([m[name] for m in item_metrics]) for name in _METRIC_NAMES
+    }
+
+
+def _get_actual_model(model: str | None) -> str:
+    """Get the actual model name based on provider config."""
+    if model:
+        return model
+    return OPENROUTER_MODEL if LLM_PROVIDER == "openrouter" else OPENAI_MODEL
+
+
+def _create_agent_factory(agent_mode: str, model: str | None):
+    """Create an agent factory function for the specified mode.
+
+    Args:
+        agent_mode: One of "sql", "sparql", "entity", or "auto"
+        model: Optional model name
+
+    Returns:
+        A factory function (build_index: bool) -> agent
+    """
+    mode = agent_mode.strip().lower()
+
+    _AGENT_CREATORS = {
+        "sql": create_stark_prime_sql_agent,
+        "sparql": create_stark_prime_sparql_agent,
+        "entity": create_stark_prime_entity_resolver_agent,
+    }
+
+    creator = _AGENT_CREATORS.get(mode, create_stark_prime_agent)
+
+    def factory(build_index: bool):
+        return creator(
+            model=model,
+            build_entity_index_on_start=build_index,
+            log_ready=False,
+        )
+
+    return factory
+
+
+def _print_benchmark_summary(
+    item_count: int,
+    failures: list[dict[str, str]],
+    avg_metrics: dict[str, float],
+    run_dir: str | None = None,
+    verbose: bool = True,
+) -> None:
+    """Print benchmark completion summary."""
+    if not verbose:
+        return
+
+    print("\n" + "=" * 60)
+    print("Benchmark Complete!")
+    print("=" * 60)
+    print(f"Items processed: {item_count}")
+    print(f"Failures: {len(failures)}")
+    for name, value in avg_metrics.items():
+        print(f"{name}: {value:.3f}")
+    if failures:
+        print("\nFailed items:")
+        for failure in failures[:10]:
+            print(f"  - {failure['item_id']}: {failure['error']}")
+        if len(failures) > 10:
+            print(f"  ... {len(failures) - 10} more")
+    if run_dir:
+        print(f"Artifacts written to: {run_dir}")
+    print("=" * 60)
+
+
 def compute_metrics(predicted_ids: list[int], gold_ids: list[int]) -> dict[str, float]:
     """Compute evaluation metrics.
 
@@ -260,7 +346,9 @@ def prompt_for_dataset(langfuse) -> str | None:
             if choice in datasets:
                 return choice
             else:
-                print(f"Dataset '{choice}' not found. Please select from the list above.")
+                print(
+                    f"Dataset '{choice}' not found. Please select from the list above."
+                )
 
 
 def _load_local_dataset(dataset_file: str) -> list[dict[str, Any]]:
@@ -286,7 +374,9 @@ def _load_local_dataset(dataset_file: str) -> list[dict[str, Any]]:
         elif isinstance(payload, list):
             items = payload
         else:
-            raise ValueError("Unsupported JSON dataset format; expected list or {items: [...]}.")
+            raise ValueError(
+                "Unsupported JSON dataset format; expected list or {items: [...]}."
+            )
     elif ext == ".csv":
         with open(dataset_file, "r", encoding="utf-8") as handle:
             reader = csv.DictReader(handle)
@@ -448,9 +538,7 @@ def run_benchmark(
             sys.exit(1)
 
     # Determine the actual model name based on provider
-    actual_model = model
-    if not actual_model:
-        actual_model = OPENROUTER_MODEL if LLM_PROVIDER == "openrouter" else OPENAI_MODEL
+    actual_model = _get_actual_model(model)
 
     if verbose:
         print(f"\nRunning benchmark on dataset: {dataset_name}")
@@ -463,32 +551,7 @@ def run_benchmark(
     if verbose:
         print("\nInitializing STaRK-Prime agent...")
 
-    agent_mode_normalized = agent_mode.strip().lower()
-
-    def agent_factory(build_index: bool):
-        if agent_mode_normalized == "sql":
-            return create_stark_prime_sql_agent(
-                model=model,
-                build_entity_index_on_start=build_index,
-                log_ready=False,
-            )
-        if agent_mode_normalized == "sparql":
-            return create_stark_prime_sparql_agent(
-                model=model,
-                build_entity_index_on_start=build_index,
-                log_ready=False,
-            )
-        if agent_mode_normalized == "entity":
-            return create_stark_prime_entity_resolver_agent(
-                model=model,
-                build_entity_index_on_start=build_index,
-                log_ready=False,
-            )
-        return create_stark_prime_agent(
-            model=model,
-            build_entity_index_on_start=build_index,
-            log_ready=False,
-        )
+    agent_factory = _create_agent_factory(agent_mode, model)
 
     agent = agent_factory(build_index=True)
 
@@ -509,8 +572,14 @@ def run_benchmark(
 
     # Prompt for run name
     default_run_name = f"STaRK-Prime Benchmark - {dataset_name}"
-    run_name = run_name or input(f"\nRun name [{default_run_name}]: ").strip() or default_run_name
-    run_description = f"Benchmark run on {dataset_name} using {LLM_PROVIDER} model {actual_model}"
+    run_name = (
+        run_name
+        or input(f"\nRun name [{default_run_name}]: ").strip()
+        or default_run_name
+    )
+    run_description = (
+        f"Benchmark run on {dataset_name} using {LLM_PROVIDER} model {actual_model}"
+    )
     run_metadata = {
         "provider": LLM_PROVIDER,
         "model": actual_model,
@@ -654,13 +723,21 @@ def run_benchmark(
                     item_id = _get_item_field(item, "id", "unknown")
                     item_input = _get_item_field(item, "input", "")
                     failures.append(
-                        {"item_id": str(item_id), "input": item_input, "error": str(exc)}
+                        {
+                            "item_id": str(item_id),
+                            "input": item_input,
+                            "error": str(exc),
+                        }
                     )
                     if verbose:
                         _tqdm_module.write(f"Warning: item {item_id} failed: {exc}")
         else:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as executor:
-                future_to_item = {executor.submit(_process_item, item): item for item in items}
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=concurrency
+            ) as executor:
+                future_to_item = {
+                    executor.submit(_process_item, item): item for item in items
+                }
                 for future in concurrent.futures.as_completed(future_to_item):
                     progress.update(1)
                     try:
@@ -671,7 +748,11 @@ def run_benchmark(
                         item_id = _get_item_field(item, "id", "unknown")
                         item_input = _get_item_field(item, "input", "")
                         failures.append(
-                            {"item_id": str(item_id), "input": item_input, "error": str(exc)}
+                            {
+                                "item_id": str(item_id),
+                                "input": item_input,
+                                "error": str(exc),
+                            }
                         )
                         if verbose:
                             _tqdm_module.write(f"Warning: item {item_id} failed: {exc}")
@@ -687,34 +768,9 @@ def run_benchmark(
 
     langfuse.flush()
 
-    def _avg(values: list[float]) -> float:
-        return sum(values) / len(values) if values else 0.0
+    avg_metrics = _compute_avg_metrics(item_metrics)
 
-    avg_metrics = {
-        "avg_precision": _avg([m["precision"] for m in item_metrics]),
-        "avg_recall": _avg([m["recall"] for m in item_metrics]),
-        "avg_f1": _avg([m["f1"] for m in item_metrics]),
-        "avg_exact_match": _avg([m["exact_match"] for m in item_metrics]),
-        "avg_hit@1": _avg([m["hit@1"] for m in item_metrics]),
-        "avg_hit@5": _avg([m["hit@5"] for m in item_metrics]),
-        "avg_mrr": _avg([m["mrr"] for m in item_metrics]),
-    }
-
-    if verbose:
-        print("\n" + "=" * 60)
-        print("Benchmark Complete!")
-        print("=" * 60)
-        print(f"Items processed: {len(item_metrics)}")
-        print(f"Failures: {len(failures)}")
-        for name, value in avg_metrics.items():
-            print(f"{name}: {value:.3f}")
-        if failures:
-            print("\nFailed items:")
-            for failure in failures[:10]:
-                print(f"  - {failure['item_id']}: {failure['error']}")
-            if len(failures) > 10:
-                print(f"  ... {len(failures) - 10} more")
-        print("=" * 60)
+    _print_benchmark_summary(len(item_metrics), failures, avg_metrics, verbose=verbose)
 
     return {
         "run_name": run_name,
@@ -748,9 +804,7 @@ def run_benchmark_local(
     dataset_label = dataset_name or os.path.basename(dataset_file)
 
     # Determine the actual model name based on provider
-    actual_model = model
-    if not actual_model:
-        actual_model = OPENROUTER_MODEL if LLM_PROVIDER == "openrouter" else OPENAI_MODEL
+    actual_model = _get_actual_model(model)
 
     if verbose:
         print(f"\nRunning local benchmark on dataset: {dataset_label}")
@@ -762,32 +816,7 @@ def run_benchmark_local(
     if verbose:
         print("\nInitializing STaRK-Prime agent...")
 
-    agent_mode_normalized = agent_mode.strip().lower()
-
-    def agent_factory(build_index: bool):
-        if agent_mode_normalized == "sql":
-            return create_stark_prime_sql_agent(
-                model=model,
-                build_entity_index_on_start=build_index,
-                log_ready=False,
-            )
-        if agent_mode_normalized == "sparql":
-            return create_stark_prime_sparql_agent(
-                model=model,
-                build_entity_index_on_start=build_index,
-                log_ready=False,
-            )
-        if agent_mode_normalized == "entity":
-            return create_stark_prime_entity_resolver_agent(
-                model=model,
-                build_entity_index_on_start=build_index,
-                log_ready=False,
-            )
-        return create_stark_prime_agent(
-            model=model,
-            build_entity_index_on_start=build_index,
-            log_ready=False,
-        )
+    agent_factory = _create_agent_factory(agent_mode, model)
 
     _ = agent_factory(build_index=True)
 
@@ -795,7 +824,11 @@ def run_benchmark_local(
         print("\nRunning benchmark loop...")
 
     default_run_name = f"STaRK-Prime Local Benchmark - {dataset_label}"
-    run_name = run_name or input(f"\nRun name [{default_run_name}]: ").strip() or default_run_name
+    run_name = (
+        run_name
+        or input(f"\nRun name [{default_run_name}]: ").strip()
+        or default_run_name
+    )
 
     run_dir = os.path.join(output_dir, run_name)
     os.makedirs(run_dir, exist_ok=True)
@@ -831,25 +864,16 @@ def run_benchmark_local(
             item_metrics.extend(prev_metrics)
             # Filter out completed items; keep failed ones so they are retried
             items_all = [
-                item for item in items_all if str(item.get("id", "unknown")) not in completed_ids
+                item
+                for item in items_all
+                if str(item.get("id", "unknown")) not in completed_ids
             ]
 
         if not items_all:
             if verbose:
                 print("All dataset items already completed for this run.")
 
-            def _avg(values: list[float]) -> float:
-                return sum(values) / len(values) if values else 0.0
-
-            avg_metrics = {
-                "avg_precision": _avg([m["precision"] for m in item_metrics]),
-                "avg_recall": _avg([m["recall"] for m in item_metrics]),
-                "avg_f1": _avg([m["f1"] for m in item_metrics]),
-                "avg_exact_match": _avg([m["exact_match"] for m in item_metrics]),
-                "avg_hit@1": _avg([m["hit@1"] for m in item_metrics]),
-                "avg_hit@5": _avg([m["hit@5"] for m in item_metrics]),
-                "avg_mrr": _avg([m["mrr"] for m in item_metrics]),
-            }
+            avg_metrics = _compute_avg_metrics(item_metrics)
             return {
                 "run_name": run_name,
                 "metrics": avg_metrics,
@@ -928,15 +952,23 @@ def run_benchmark_local(
                 except Exception as exc:
                     item_id = str(item.get("id", "unknown"))
                     item_input = str(item.get("input", ""))
-                    failure_record = {"item_id": item_id, "input": item_input, "error": str(exc)}
+                    failure_record = {
+                        "item_id": item_id,
+                        "input": item_input,
+                        "error": str(exc),
+                    }
                     failures.append(failure_record)
                     with write_lock:
                         _write_jsonl_record(failures_path, failure_record)
                     if verbose:
                         _tqdm_module.write(f"Warning: item {item_id} failed: {exc}")
         else:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as executor:
-                future_to_item = {executor.submit(_process_item, item): item for item in items_all}
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=concurrency
+            ) as executor:
+                future_to_item = {
+                    executor.submit(_process_item, item): item for item in items_all
+                }
                 for future in concurrent.futures.as_completed(future_to_item):
                     progress.update(1)
                     try:
@@ -966,18 +998,7 @@ def run_benchmark_local(
                     future.cancel()
         raise
 
-    def _avg(values: list[float]) -> float:
-        return sum(values) / len(values) if values else 0.0
-
-    avg_metrics = {
-        "avg_precision": _avg([m["precision"] for m in item_metrics]),
-        "avg_recall": _avg([m["recall"] for m in item_metrics]),
-        "avg_f1": _avg([m["f1"] for m in item_metrics]),
-        "avg_exact_match": _avg([m["exact_match"] for m in item_metrics]),
-        "avg_hit@1": _avg([m["hit@1"] for m in item_metrics]),
-        "avg_hit@5": _avg([m["hit@5"] for m in item_metrics]),
-        "avg_mrr": _avg([m["mrr"] for m in item_metrics]),
-    }
+    avg_metrics = _compute_avg_metrics(item_metrics)
 
     # Clean up failures.jsonl: remove any failures that are now in items.jsonl
     # (i.e., items that were retried and succeeded)
@@ -1068,7 +1089,9 @@ def run_benchmark_mlflow(
     genai = importlib.import_module("mlflow.genai")
     genai_scorers = importlib.import_module("mlflow.genai.scorers")
 
-    scorer_decorator = getattr(genai, "scorer", None) or getattr(genai_scorers, "scorer")
+    scorer_decorator = getattr(genai, "scorer", None) or getattr(
+        genai_scorers, "scorer"
+    )
 
     if MLFLOW_EXPERIMENT_ID:
         mlflow.set_experiment(experiment_id=MLFLOW_EXPERIMENT_ID)
@@ -1094,38 +1117,23 @@ def run_benchmark_mlflow(
     # Determine the actual model name based on provider
     actual_model = model
     if not actual_model:
-        actual_model = OPENROUTER_MODEL if LLM_PROVIDER == "openrouter" else OPENAI_MODEL
+        actual_model = (
+            OPENROUTER_MODEL if LLM_PROVIDER == "openrouter" else OPENAI_MODEL
+        )
 
     if verbose:
         print(f"\nRunning benchmark on MLflow dataset: {dataset_name}")
         print(f"Provider: {LLM_PROVIDER}")
         print(f"Model: {actual_model}")
         if concurrency != 1:
-            print("Concurrency is managed by MLflow evaluate; running with default settings.")
+            print(
+                "Concurrency is managed by MLflow evaluate; running with default settings."
+            )
         print("=" * 60)
 
     agent_mode_normalized = agent_mode.strip().lower()
 
-    def agent_factory(build_index: bool):
-        if agent_mode_normalized == "sql":
-            return create_stark_prime_sql_agent(
-                model=model,
-                build_entity_index_on_start=build_index,
-            )
-        if agent_mode_normalized == "sparql":
-            return create_stark_prime_sparql_agent(
-                model=model,
-                build_entity_index_on_start=build_index,
-            )
-        if agent_mode_normalized == "entity":
-            return create_stark_prime_entity_resolver_agent(
-                model=model,
-                build_entity_index_on_start=build_index,
-            )
-        return create_stark_prime_agent(
-            model=model,
-            build_entity_index_on_start=build_index,
-        )
+    agent_factory = _create_agent_factory(agent_mode_normalized, model)
 
     if verbose:
         print("\nInitializing STaRK-Prime agent...")

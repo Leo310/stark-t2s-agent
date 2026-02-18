@@ -23,7 +23,6 @@ from stark_prime_t2s.config import (
     EMBEDDING_BASE_URL,
     EMBEDDING_MODEL,
     EMBEDDING_PROVIDER,
-    HUGGINGFACE_API_KEY,
     HUGGINGFACE_EMBEDDING_MODEL,
     OPENAI_API_KEY,
     OPENROUTER_API_KEY,
@@ -97,6 +96,94 @@ def _get_qdrant_client() -> QdrantClient:
     return _qdrant_client
 
 
+# ---------------------------------------------------------------------------
+# Embedding Provider Registry
+# ---------------------------------------------------------------------------
+
+
+def _create_openai_embeddings() -> Embeddings:
+    """Create OpenAI embeddings."""
+    from langchain_openai import OpenAIEmbeddings
+
+    api_key = SecretStr(OPENAI_API_KEY) if OPENAI_API_KEY else None
+    base_url = EMBEDDING_BASE_URL or OPENROUTER_BASE_URL
+    return OpenAIEmbeddings(
+        model=EMBEDDING_MODEL,
+        check_embedding_ctx_length=False,
+        api_key=api_key,
+        base_url=base_url,
+    )
+
+
+def _create_openrouter_embeddings() -> Embeddings:
+    """Create OpenRouter embeddings (OpenAI-compatible)."""
+    from langchain_openai import OpenAIEmbeddings
+
+    api_key = SecretStr(OPENROUTER_API_KEY) if OPENROUTER_API_KEY else None
+    base_url = EMBEDDING_BASE_URL or OPENROUTER_BASE_URL
+    return OpenAIEmbeddings(
+        model=EMBEDDING_MODEL,
+        check_embedding_ctx_length=False,
+        api_key=api_key,
+        base_url=base_url,
+    )
+
+
+def _create_huggingface_embeddings() -> Embeddings:
+    """Create HuggingFace embeddings."""
+    try:
+        from langchain_huggingface import HuggingFaceEmbeddings
+    except ImportError as e:
+        raise ImportError(
+            "HuggingFace embeddings provider selected but langchain-huggingface is not installed. "
+            "Install it with: pip install langchain-huggingface sentence-transformers"
+        ) from e
+
+    return HuggingFaceEmbeddings(
+        model_name=HUGGINGFACE_EMBEDDING_MODEL,
+        model_kwargs={"device": "cpu"},
+        encode_kwargs={"normalize_embeddings": True},
+    )
+
+
+def _create_azure_embeddings() -> Embeddings:
+    """Create Azure OpenAI embeddings."""
+    from langchain_openai import AzureOpenAIEmbeddings
+
+    return AzureOpenAIEmbeddings(
+        model=EMBEDDING_MODEL,
+        azure_endpoint=AZURE_OPENAI_ENDPOINT,
+        api_key=SecretStr(AZURE_OPENAI_API_KEY) if AZURE_OPENAI_API_KEY else None,
+        azure_deployment=AZURE_OPENAI_EMBEDDING_DEPLOYMENT,
+    )
+
+
+def _create_cohere_embeddings() -> Embeddings:
+    """Create Cohere embeddings."""
+    try:
+        from langchain_cohere import CohereEmbeddings
+    except ImportError as e:
+        raise ImportError(
+            "Cohere embeddings provider selected but langchain-cohere is not installed. "
+            "Install it with: pip install langchain-cohere"
+        ) from e
+
+    return CohereEmbeddings(
+        model=COHERE_EMBEDDING_MODEL,
+        cohere_api_key=SecretStr(COHERE_API_KEY) if COHERE_API_KEY else None,
+    )
+
+
+# Registry mapping provider names to factory functions
+_EMBEDDING_PROVIDERS: dict[str, callable] = {
+    "openai": _create_openai_embeddings,
+    "openrouter": _create_openrouter_embeddings,
+    "huggingface": _create_huggingface_embeddings,
+    "azure": _create_azure_embeddings,
+    "cohere": _create_cohere_embeddings,
+}
+
+
 def _get_embeddings() -> Embeddings:
     """Get embeddings instance (singleton) based on EMBEDDING_PROVIDER config.
 
@@ -114,80 +201,14 @@ def _get_embeddings() -> Embeddings:
     if _embeddings is None:
         provider = EMBEDDING_PROVIDER.lower()
 
-        if provider == "openai":
-            from langchain_openai import OpenAIEmbeddings
-
-            api_key = SecretStr(OPENAI_API_KEY) if OPENAI_API_KEY else None
-            base_url = (
-                EMBEDDING_BASE_URL or OPENROUTER_BASE_URL
-            )  # Allow custom base URL override
-            _embeddings = OpenAIEmbeddings(
-                model=EMBEDDING_MODEL,
-                check_embedding_ctx_length=False,
-                api_key=api_key,
-                base_url=base_url,
-            )
-
-        elif provider == "openrouter":
-            # OpenRouter is OpenAI-compatible
-            from langchain_openai import OpenAIEmbeddings
-
-            api_key = SecretStr(OPENROUTER_API_KEY) if OPENROUTER_API_KEY else None
-            base_url = EMBEDDING_BASE_URL or OPENROUTER_BASE_URL
-            _embeddings = OpenAIEmbeddings(
-                model=EMBEDDING_MODEL,
-                check_embedding_ctx_length=False,
-                api_key=api_key,
-                base_url=base_url,
-            )
-
-        elif provider == "huggingface":
-            try:
-                from langchain_huggingface import HuggingFaceEmbeddings
-            except ImportError as e:
-                raise ImportError(
-                    "HuggingFace embeddings provider selected but langchain-huggingface is not installed. "
-                    "Install it with: pip install langchain-huggingface sentence-transformers"
-                ) from e
-
-            model_name = HUGGINGFACE_EMBEDDING_MODEL
-            _embeddings = HuggingFaceEmbeddings(
-                model_name=model_name,
-                model_kwargs={"device": "cpu"},
-                encode_kwargs={"normalize_embeddings": True},
-            )
-
-        elif provider == "azure":
-            from langchain_openai import AzureOpenAIEmbeddings
-
-            _embeddings = AzureOpenAIEmbeddings(
-                model=EMBEDDING_MODEL,
-                azure_endpoint=AZURE_OPENAI_ENDPOINT,
-                api_key=(
-                    SecretStr(AZURE_OPENAI_API_KEY) if AZURE_OPENAI_API_KEY else None
-                ),
-                azure_deployment=AZURE_OPENAI_EMBEDDING_DEPLOYMENT,
-            )
-
-        elif provider == "cohere":
-            try:
-                from langchain_cohere import CohereEmbeddings
-            except ImportError as e:
-                raise ImportError(
-                    "Cohere embeddings provider selected but langchain-cohere is not installed. "
-                    "Install it with: pip install langchain-cohere"
-                ) from e
-
-            _embeddings = CohereEmbeddings(
-                model=COHERE_EMBEDDING_MODEL,
-                cohere_api_key=SecretStr(COHERE_API_KEY) if COHERE_API_KEY else None,
-            )
-
-        else:
+        if provider not in _EMBEDDING_PROVIDERS:
+            supported = ", ".join(_EMBEDDING_PROVIDERS.keys())
             raise ValueError(
                 f"Unsupported EMBEDDING_PROVIDER: {EMBEDDING_PROVIDER}. "
-                f"Supported providers: openai, openrouter, huggingface, azure, cohere"
+                f"Supported providers: {supported}"
             )
+
+        _embeddings = _EMBEDDING_PROVIDERS[provider]()
 
     return _embeddings
 

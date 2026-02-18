@@ -47,11 +47,11 @@
 = Introduction
 @LLM:pla have fundamentally changed individual search behavior and information-seeking patterns. Whereas users previously needed to translate natural language into keyword searches tailored to algorithmic patterns, they can now directly employ @NLQ:pla to acquire information by interacting with @LLM systems. This approach better aligns with intuitive user behavior, enables more efficient information synthesis, and is already evident in observed user practices @sommerfeld2025ai @kaiser2025.
 
-While @LLM:pla can answer @NLQ:pla directly from their parametric knowledge, this knowledge is static, bounded by the training cutoff, and prone to hallucination, particularly for domain-specific, rapidly evolving, or long-tail factual queries @gao2024retrievalaugmentedgenerationlargelanguage. @RAG addresses these limitations by integrating classical @IR into the generative workflow: retrieved documents ground the @LLM's output in verified sources, reducing hallucination and extending coverage beyond the model's parameters. Historically, @IR produced ranked document lists from unstructured corpora; @RAG repurposes this capability by feeding the top-ranked passages directly into the @LLM context, enabling answer synthesis rather than document ranking @gao2024retrievalaugmentedgenerationlargelanguage.
+While @LLM:pla can answer @NLQ:pla directly from their parametric knowledge, this knowledge is static, bounded by the training cutoff, and prone to hallucination, particularly for domain-specific, rapidly evolving, or long-tail factual queries @gao2024retrievalaugmentedgenerationlargelanguage. @RAG addresses these limitations by integrating classical @IR into the generative workflow: retrieved documents ground the @LLM's output in verified sources, reducing hallucination and extending coverage beyond the model's parameters. Historically, @IR produced ranked document lists from unstructured corpora. @RAG repurposes this capability by feeding the top-ranked passages directly into the @LLM context, enabling answer synthesis rather than document ranking @gao2024retrievalaugmentedgenerationlargelanguage.
 
-However, standard @RAG pipelines rely on semantic similarity search over text chunks, which is inherently limited when the underlying data is structured. Chunking tabular or graph-structured data into flat text fragments destroys explicit row/column dependencies, typed relationships, and multi-hop paths; as a result, semantic retrieval struggles with aggregation queries, constraint satisfaction, and compositional relational reasoning @yu-etal-2025-tablerag @biswal2024text2sqlenoughunifyingai. Schema-bound query languages such as @SQL and @SPARQL avoid these failure modes by operating directly on the relational or graph structure, leveraging exact joins, filters, and traversals that cannot be replicated by embedding-based retrieval alone.
+However, standard @RAG pipelines rely on semantic similarity search over text chunks, which is inherently limited when the underlying data is structured. Chunking tabular or graph-structured data into flat text fragments destroys explicit row/column dependencies, typed relationships, and multi-hop paths. As a result, semantic retrieval struggles with aggregation queries, constraint satisfaction, and compositional relational reasoning @yu-etal-2025-tablerag @biswal2024text2sqlenoughunifyingai. Schema-bound query languages such as @SQL and @SPARQL avoid these failure modes by operating directly on the relational or graph structure, leveraging exact joins, filters, and traversals that cannot be replicated by embedding-based retrieval alone.
 
-As the industry enters what is widely termed the "Year of the Agent"#footnote[See, e.g., #link("https://medium.com/@billxu_atoms/why-2025-is-the-year-of-the-ai-agent-b2d5cef99f42")[B.\ Xu, _Why 2025 is the Year of the AI Agent_, Medium, 2025].], @aRAG emerges as the next evolution of @RAG, moving beyond pre-orchestrated workflows toward dynamic reasoning loops capable of autonomous action @singh2025agenticretrievalaugmentedgenerationsurvey. This paper investigates the agent's ability to leverage schema-bound query languages, specifically @SQL and @SPARQL, as retrieval tools alongside semantic search, and empirically compares these strategies on the same benchmark. The focus is motivated by two converging observations: first, that semi-structured databases can be effectively constructed from unstructured corpora at scale @sun2025 @bai2025autoschemakgautonomousknowledgegraph, making structured retrieval broadly applicable; and second, that schema-bound querying consistently improves factual retrieval performance over semantic search alone in agentic systems @singh2025agenticretrievalaugmentedgenerationsurvey.
+As the industry enters what is widely termed the "Year of the Agent"#footnote[See, e.g., #link("https://medium.com/@billxu_atoms/why-2025-is-the-year-of-the-ai-agent-b2d5cef99f42")[B.\ Xu, _Why 2025 is the Year of the AI Agent_, Medium, 2025].], @aRAG emerges as the next evolution of @RAG, moving beyond pre-orchestrated workflows toward dynamic reasoning loops capable of autonomous action @singh2025agenticretrievalaugmentedgenerationsurvey. This paper investigates the agent's ability to leverage schema-bound query languages, specifically @SQL and @SPARQL, as retrieval tools alongside semantic search, and empirically compares these strategies on the same benchmark. The focus is motivated by two converging observations: first, that semi-structured databases can be effectively constructed from unstructured corpora at scale @sun2025 @bai2025autoschemakgautonomousknowledgegraph, making structured retrieval broadly applicable, and second, that schema-bound querying consistently improves factual retrieval performance over semantic search alone in agentic systems @singh2025agenticretrievalaugmentedgenerationsurvey.
 
 = Related Work
 
@@ -64,7 +64,7 @@ Our evaluation builds on the STaRK benchmark @stark2024, which pairs real-world 
 
 Prior work has explored @RAG\-style systems grounded in tabular data. A common baseline is to parse tabular data into a text format, chunk the result, and retrieve top-\(k\) chunks like an ordinary document corpus. This is often lossy: it weakens explicit row/column dependencies, and chunking fragments surrounding context that is needed for aggregation-style or multi-hop queries @yu-etal-2025-tablerag @biswal2024text2sqlenoughunifyingai.
 
-To avoid these failure modes, many recent approaches shift the retrieval step from semantic similarity search over serialized rows to an execution-based access layer over structured relations: a @LLM synthesizes an executable query (typically SQL) from a @NLQ which is then executed against a @DBMS to compute the relevant subset. In heterogeneous document settings, this has been motivated as a way to treat table-related subproblems as monolithic reasoning units, mitigating top-\(k\) chunk bias on global queries @yu-etal-2025-tablerag. The TAG framework generalizes this view, arguing that (i) pure Text2SQL only covers requests expressible in relational algebra and (ii) "row-retrieval @RAG" only supports point-lookup style questions; on the corresponding TAG-Bench, vanilla Text2SQL and vanilla RAG each plateau at roughly 20\% exact-match accuracy, whereas combined pipelines reach over 55\% @biswal2024text2sqlenoughunifyingai. These findings are consistent with the broader trend surfaced by large-scale benchmarks such as BIRD, which stresses dirty real-world databases, external knowledge requirements, and SQL efficiency, and on which even frontier models still fall well short of human performance @li2023bird.
+To avoid these failure modes, many recent approaches shift the retrieval step from semantic similarity search over serialized rows to an execution-based access layer over structured relations: a @LLM synthesizes an executable query (typically SQL) from a @NLQ which is then executed against a @DBMS to compute the relevant subset. In heterogeneous document settings, this has been motivated as a way to treat table-related subproblems as monolithic reasoning units, mitigating top-\(k\) chunk bias on global queries @yu-etal-2025-tablerag. The TAG framework generalizes this view, arguing that (i) pure Text2SQL only covers requests expressible in relational algebra and (ii) "row-retrieval @RAG" only supports point-lookup style questions. On the corresponding TAG-Bench, vanilla Text2SQL and vanilla RAG each plateau at roughly 20\% exact-match accuracy, whereas combined pipelines reach over 55\% @biswal2024text2sqlenoughunifyingai. These findings are consistent with the broader trend surfaced by large-scale benchmarks such as BIRD, which stresses dirty real-world databases, external knowledge requirements, and SQL efficiency, and on which even frontier models still fall well short of human performance @li2023bird.
 
 While @LLM:pla have largely subsumed the role of earlier specialized neural parsers as the core SQL generation engine, state of the art systems still rely on orchestration layers that ensure the quality of the produced queries. We have identified four such techniques that are widely adopted across recent work:
 
@@ -118,7 +118,7 @@ We present an agentic retrieval system for the STaRK-Prime knowledge base @stark
 
 == System Architecture <sec:architecture>
 
-Our system follows the @aRAG paradigm, employing an autonomous agent loop as the core reasoning mechanism (see @fig:agent-loop). The agent iteratively reasons about the user's query, selects appropriate tools, executes them, and refines its approach based on intermediate results. This loop continues until the agent determines it has gathered sufficient information to answer the query or reaches a predefined iteration limit of 15 steps, which serves as a safeguard against infinite loops when the agent repeatedly fails to find relevant entities or formulates unsuccessful queries.
+Our system follows the @aRAG paradigm, employing an autonomous agent loop as the core reasoning mechanism (see @fig:agent-loop). The agent iteratively reasons about the user's query, selects appropriate tools, executes them, and refines its approach based on intermediate results. This loop continues until the agent determines it has gathered sufficient information to answer the query or reaches a predefined iteration limit of 50 steps, which serves as a safeguard against infinite loops when the agent repeatedly fails to find relevant entities or formulates unsuccessful queries.
 
 The architecture comprises three components:
 
@@ -193,7 +193,7 @@ Our system prompt includes:
 
 - *SPARQL Vocabulary Summary*: The RDF namespace, available predicates (relation types), node URI patterns, and property definitions. This grounds the @LLM's understanding of the graph structure for pattern matching.
 
-- *Query Guidelines*: Best practices for query formulation, including mandatory LIMIT clauses, read-only restrictions, and error handling strategies.
+- *Query Guidelines*: Best practices for query formulation, including, few-shot examples, mandatory LIMIT clauses, read-only restrictions, and error handling strategies.
 
 This schema grounding approach follows established text-to-SQL practices, where providing database schema context significantly improves query generation accuracy. The schema is dynamically generated at agent initialization time, ensuring consistency with the actual data store state.
 
@@ -287,7 +287,7 @@ This instrumentation enables both real-time debugging during development and sys
 We evaluate on the STaRK Human-Generated QA benchmark @stark2024, comprising 109 natural-language questions over PrimeKG @chandak2023primekg, a biomedical knowledge graph. Questions require entity retrieval from a heterogeneous graph containing diseases, drugs, genes/proteins, pathways, biological processes, molecular functions, cellular components, anatomical structures, exposures, and phenotypes. Unlike synthetic benchmarks, the human-generated queries exhibit diverse linguistic patterns and varying complexity levels, including simple entity lookups, multi-hop relational queries, and complex constraint satisfaction problems.
 
 *Agent Configurations.*
-We compare four agentic retrieval strategies as described in @sec:agent-configurations: Search-Only, Search+SPARQL, Search+SQL, and Search+SQL+SPARQL. Each configuration provides access to different tool combinations, enabling systematic comparison of retrieval strategies. All agents use semantic search; Search-Only relies on it exclusively, while the others add structured query capabilities on top.
+We compare four agentic retrieval strategies as described in @sec:agent-configurations: Search-Only, Search+SPARQL, Search+SQL, and Search+SQL+SPARQL. Each configuration provides access to different tool combinations, enabling systematic comparison of retrieval strategies. All agents use semantic search. Search-Only relies on it exclusively, while the others add structured query capabilities on top.
 
 *Models.*
 Following @sec:model-selection, each agent configuration is instantiated with two model variants: *GPT-5-mini* (smaller and faster) and *GPT-5* (full-scale). This pairing isolates the effect of model capacity on agentic retrieval performance.
@@ -305,7 +305,7 @@ Let $Y$ denote the gold entity set and $hat(Y)$ the predicted entity set. We rep
 - *Exact Match (EM)*: $bb(1)[hat(Y) = Y]$ --- indicator of perfect set match.
 - *Hit\@k*: $bb(1)[|hat(Y)_(1:k) inter Y| > 0]$ --- whether any correct entity appears in the top-$k$ results.
 - *MRR*: Mean Reciprocal Rank of the first correct entity in the ranked output.
-- *Latency*: End-to-end wall-clock time per query (seconds).
+- *Latency*: End-to-end elapsed time per query (seconds).
 
 == Main Results <sec:main-results>
 
@@ -321,7 +321,7 @@ Let $Y$ denote the gold entity set and $hat(Y)$ the predicted entity set. We rep
     [*Method*], [*Hit\@1*], [*Hit\@5*], [*R\@20*], [*MRR*],
     table.hline(stroke: 0.75pt),
 
-    [AvaTaR (GPT-4-turbo)], [33.0%], [51.4%], [53.3%], [41.0%],
+    [AvaTaR (GPT-4-turbo)], [*33.0%*], [*51.4%*], [*53.3%*], [*41.0%*],
     [Claude3 Reranker], [28.6%], [46.9%], [41.6%], [36.3%],
     [GPT4 Reranker], [28.6%], [44.9%], [41.6%], [34.8%],
     [GritLM-7b], [25.5%], [41.8%], [48.1%], [34.3%],
@@ -354,7 +354,7 @@ Let $Y$ denote the gold entity set and $hat(Y)$ the predicted entity set. We rep
     [11.2% #text(size: 0.8em)[(1.5)]],
     [34.1% #text(size: 0.8em)[(1.7)]],
     [42.0% #text(size: 0.8em)[(1.8)]],
-    [37.2% #text(size: 0.8em)[(1.4)]],
+    [37.1% #text(size: 0.8em)[(1.4)]],
     [23.8],
 
     [], [GPT-5],
@@ -372,22 +372,22 @@ Let $Y$ denote the gold entity set and $hat(Y)$ the predicted entity set. We rep
     // Search+SPARQL
     [Search+SPARQL], [GPT-5-mini],
     [46.2% #text(size: 0.8em)[(1.0)]],
-    [47.2% #text(size: 0.8em)[(1.8)]],
-    [40.3% #text(size: 0.8em)[(1.1)]],
-    [24.3% #text(size: 0.8em)[(1.7)]],
+    [#underline[47.2%] #text(size: 0.8em)[(1.8)]],
+    [#underline[40.3%] #text(size: 0.8em)[(1.1)]],
+    [#underline[24.3%] #text(size: 0.8em)[(1.7)]],
     [46.7% #text(size: 0.8em)[(2.2)]],
-    [56.7% #text(size: 0.8em)[(1.5)]],
+    [56.5% #text(size: 0.8em)[(1.5)]],
     [50.6% #text(size: 0.8em)[(1.9)]],
     [42.5],
 
     [], [GPT-5],
-    [#underline[47.7%] #text(size: 0.8em)[(1.9)]],
-    [#underline[47.7%] #text(size: 0.8em)[(1.9)]],
-    [#underline[40.4%] #text(size: 0.8em)[(1.8)]],
-    [#underline[24.8%] #text(size: 0.8em)[(1.4)]],
-    [*48.5%* #text(size: 0.8em)[(1.8)]],
+    [*47.7%* #text(size: 0.8em)[(1.9)]],
+    [*47.7%* #text(size: 0.8em)[(1.9)]],
+    [*40.4%* #text(size: 0.8em)[(1.8)]],
+    [*24.8%* #text(size: 0.8em)[(1.4)]],
+    [#underline[48.5%] #text(size: 0.8em)[(1.8)]],
     [#underline[58.4%] #text(size: 0.8em)[(3.4)]],
-    [#underline[52.2%] #text(size: 0.8em)[(2.4)]],
+    [*52.2%* #text(size: 0.8em)[(2.4)]],
     [64.4],
 
     table.hline(stroke: 0.5pt),
@@ -396,7 +396,7 @@ Let $Y$ denote the gold entity set and $hat(Y)$ the predicted entity set. We rep
     [Search+SQL], [GPT-5-mini],
     [44.3% #text(size: 0.8em)[(1.6)]],
     [46.5% #text(size: 0.8em)[(1.3)]],
-    [38.3% #text(size: 0.8em)[(1.2)]],
+    [38.0% #text(size: 0.8em)[(1.2)]],
     [20.2% #text(size: 0.8em)[(1.6)]],
     [44.9% #text(size: 0.8em)[(1.7)]],
     [57.8% #text(size: 0.8em)[(1.7)]],
@@ -417,21 +417,21 @@ Let $Y$ denote the gold entity set and $hat(Y)$ the predicted entity set. We rep
 
     // Search+SQL+SPARQL
     [Search+SQL+SPARQL], [GPT-5-mini],
-    [*46.4%* #text(size: 0.8em)[(0.8)]],
-    [*47.0%* #text(size: 0.8em)[(1.9)]],
+    [#underline[46.4%] #text(size: 0.8em)[(0.8)]],
+    [47.0% #text(size: 0.8em)[(1.9)]],
     [39.4% #text(size: 0.8em)[(1.1)]],
     [20.9% #text(size: 0.8em)[(1.3)]],
-    [#underline[46.9%] #text(size: 0.8em)[(0.9)]],
+    [46.9% #text(size: 0.8em)[(0.9)]],
     [*59.8%* #text(size: 0.8em)[(2.4)]],
-    [*52.1%* #text(size: 0.8em)[(0.9)]],
+    [#underline[52.1%] #text(size: 0.8em)[(0.9)]],
     [39.4],
 
     [], [GPT-5],
     [45.9% #text(size: 0.8em)[(2.4)]],
     [43.8% #text(size: 0.8em)[(2.0)]],
     [37.8% #text(size: 0.8em)[(1.9)]],
-    [*23.2%* #text(size: 0.8em)[(2.1)]],
-    [#underline[48.6%] #text(size: 0.8em)[(2.2)]],
+    [23.2% #text(size: 0.8em)[(2.1)]],
+    [*48.6%* #text(size: 0.8em)[(2.2)]],
     [56.1% #text(size: 0.8em)[(2.4)]],
     [51.8% #text(size: 0.8em)[(2.0)]],
     [76.1],
@@ -447,7 +447,7 @@ Let $Y$ denote the gold entity set and $hat(Y)$ the predicted entity set. We rep
 
 Our agentic approaches substantially outperform all STaRK baselines. The best baseline, AvaTaR (GPT-4-turbo), achieves Hit\@1=33.0%, Hit\@5=51.4%, and MRR=41.0%. In comparison, our Search+SPARQL agent with GPT-5 achieves Hit\@1=48.5% (+15.5 pp), Hit\@5=58.4% (+7.0 pp), and MRR=52.2% (+11.2 pp).
 
-We note that STaRK baselines also report Recall\@20 (R\@20), ranging from 41.6\% to 53.3\%. This metric is not directly comparable to our set-based Recall because STaRK baselines return fixed-size ranked lists of 20 candidates, whereas our agents return variable-sized answer sets (typically 1--5 entities); we therefore restrict the comparison to Hit\@$k$ and MRR.
+We note that STaRK baselines also report Recall\@20 (R\@20), ranging from 41.6\% to 53.3\%. This metric is not directly comparable to our set-based Recall because STaRK baselines return fixed-size ranked lists of 20 candidates, whereas our agents return variable-sized answer sets (typically 1--5 entities). We therefore restrict the comparison to Hit\@$k$ and MRR.
 
 This improvement is notable because STaRK baselines include strong retrieval methods: AvaTaR (an agentic retrieval approach), Claude3 and GPT-4 rerankers, state-of-the-art dense retrievers (GritLM-7b), and OpenAI embeddings (multi-ada-002). Our agentic approach with structured query capabilities provides a qualitative advantage over these methods. However, part of the improvement may be attributable to the stronger base model (GPT-5 / GPT-5-mini vs.\ GPT-4-turbo and earlier models used in STaRK baselines); a fully controlled comparison would require running all configurations on identical model backbones.
 
@@ -500,10 +500,10 @@ The correlation between Search+SPARQL and Search+SQL is strikingly high: $r = 0.
 
 Scaling from GPT-5-mini to GPT-5 yields heterogeneous effects across agent types:
 
-- *Search-Only*: Large improvement (+9.8 pp precision, +8.1 pp F1). The stronger model better interprets query semantics and generates more effective search terms.
-- *Search+SPARQL*: Modest improvement (+1.5 pp precision, +0.1 pp F1). Query generation is already well-handled by the smaller model.
-- *Search+SQL*: Marginal or no improvement (+1.0 pp precision, −1.2 pp F1). The larger model does not improve SQL generation quality.
-- *Search+SQL+SPARQL*: Mixed results (−0.5 pp precision, −1.6 pp F1). Additional model capacity may introduce suboptimal tool selection.
+- *Search-Only*: Substantial gains (+9.8 pp precision, +8.1 pp F1). The stronger model better interprets query semantics and generates more effective search terms.
+- *Search+SPARQL*: Diminishing returns (+1.5 pp precision, +0.1 pp F1). Query generation is already well-handled by the smaller model.
+- *Search+SQL*: Negligible effect (+1.0 pp precision, −1.2 pp F1). The larger model does not improve SQL generation quality.
+- *Search+SQL+SPARQL*: Slight regression (−0.5 pp precision, −1.6 pp F1). Additional model capacity may introduce suboptimal tool selection.
 
 These findings suggest that the bottleneck for structured-query agents lies in entity resolution and knowledge graph coverage, not LLM reasoning capacity.
 
@@ -554,7 +554,7 @@ The semantic search does not surface the correct entity, typically because:
 - The query mentions the entity indirectly via properties rather than name.
 - Multiple entities share similar names, and the wrong one is selected.
 
-This is the most common failure mode: *34.9%* of queries (38/109) exhibit complete entity resolution failure (coverage = 0), while an additional *22.9%* (25/109) achieve only partial coverage. Only *42.2%* of queries achieve full coverage of gold entities during tool execution. Entity resolution failure is the dominant cause of the *38.5%* zero-recall rate observed across the benchmark. Notably, the semantic search tool itself exhibits *0% error rate* across all configurations: it reliably returns results, but those results may not contain the target entities.
+This is the most common failure mode: *34.9%* of queries (38/109) exhibit complete entity resolution failure (coverage = 0), while an additional *22.9%* (25/109) achieve only partial coverage. Only *42.2%* of queries achieve full coverage of gold entities during tool execution. Entity resolution failure is the dominant cause of the *38.5%* zero-recall rate observed across the benchmark.
 
 === Tool Execution Errors
 
@@ -569,10 +569,6 @@ This is the most common failure mode: *34.9%* of queries (38/109) exhibit comple
     table.hline(stroke: 1.5pt),
     [*Agent*], [*Model*], [*Error Rate*], [*Items Affected*],
     table.hline(stroke: 0.75pt),
-
-    [Search-Only], [GPT-5-mini], [0.00%], [0.0%],
-    [], [GPT-5], [0.00%], [0.0%],
-    table.hline(stroke: 0.5pt),
 
     [Search+SPARQL], [GPT-5-mini], [0.39%], [2.0%],
     [], [GPT-5], [0.53%], [3.8%],
@@ -590,10 +586,7 @@ This is the most common failure mode: *34.9%* of queries (38/109) exhibit comple
   caption: [Tool execution error rates by agent configuration. Error Rate = errors/total calls. Items Affected = queries with $>=$ 1 error.],
 ) <tab:tool-errors>
 
-Key observations:
-- *Search tools are error-free*: Semantic search never fails at the API level, making Search-Only agents operationally robust.
-- *SQL exhibits higher error rates than SPARQL*: Search+SQL agents experience 1.0% error rate vs. 0.4--0.5% for Search+SPARQL, with errors affecting 5.8--6.1% of items vs. 2.0--3.8%. SPARQL errors are exclusively syntax errors (malformed queries), whereas SQL errors are predominantly schema reference errors (invalid table or column names), indicating LLM confusion about the relational schema.
-- *Model scale has limited impact on error rates*: GPT-5 does not substantially reduce error rates for SQL agents compared to GPT-5-mini, though SPARQL items affected nearly doubles from 2.0\% to 3.8\%, suggesting that the larger model may attempt more complex graph patterns that are harder to formulate correctly.
+SQL exhibits higher error rates than SPARQL: Search+SQL agents experience 1.0% error rate vs. 0.4--0.5% for Search+SPARQL, with errors affecting 5.8--6.1% of items vs. 2.0--3.8%. SPARQL errors are exclusively syntax errors (malformed queries), whereas SQL errors are predominantly schema reference errors (invalid table or column names), indicating LLM confusion about the relational schema. Model scale has limited impact: GPT-5 does not substantially reduce error rates for SQL agents compared to GPT-5-mini, though SPARQL items affected nearly doubles from 2.0\% to 3.8\%, suggesting that the larger model may attempt more complex graph patterns that are harder to formulate correctly.
 
 === Zero-Result Queries (Semantic Failures)
 
@@ -601,40 +594,34 @@ Beyond execution errors, queries may succeed syntactically but return empty resu
 
 #figure(
   table(
-    columns: (auto, auto, 1fr, 1fr, 1fr),
-    align: (left, left, center, center, center),
+    columns: (auto, auto, 1fr, 1fr),
+    align: (left, left, center, center),
     stroke: none,
 
     table.hline(stroke: 1.5pt),
-    [*Agent*], [*Model*], [*Overall Zero-Result*], [*SQL Zero-Result*], [*SPARQL Zero-Result*],
+    [*Agent*], [*Model*], [*SQL Zero-Result*], [*SPARQL Zero-Result*],
     table.hline(stroke: 0.75pt),
 
-    [Search-Only], [GPT-5-mini], [0.0%], [---], [---],
-    [], [GPT-5], [0.0%], [---], [---],
+    [Search+SPARQL], [GPT-5-mini], [---], [42.3%],
+    [], [GPT-5], [---], [53.2%],
     table.hline(stroke: 0.5pt),
 
-    [Search+SPARQL], [GPT-5-mini], [14.4%], [---], [42.3%],
-    [], [GPT-5], [17.2%], [---], [53.2%],
+    [Search+SQL], [GPT-5-mini], [49.6%], [---],
+    [], [GPT-5], [62.3%], [---],
     table.hline(stroke: 0.5pt),
 
-    [Search+SQL], [GPT-5-mini], [21.1%], [49.6%], [---],
-    [], [GPT-5], [21.9%], [62.3%], [---],
-    table.hline(stroke: 0.5pt),
-
-    [Search+SQL+SPARQL], [GPT-5-mini], [19.1%], [50.0%], [25.6%],
-    [], [GPT-5], [19.7%], [63.3%], [28.5%],
+    [Search+SQL+SPARQL], [GPT-5-mini], [50.0%], [25.6%],
+    [], [GPT-5], [63.3%], [28.5%],
 
     table.hline(stroke: 1.5pt),
   ),
-  caption: [Zero-result rates by agent and tool type. Overall rate is weighted by tool usage; per-tool rates show tool-specific query failure.],
+  caption: [Zero-result rates by agent and tool type.],
 ) <tab:zero-results>
 
 The most striking finding is that *SQL queries return empty results 50--63% of the time*, compared to 25--53% for SPARQL. This substantial gap indicates that LLMs struggle more with relational query formulation than graph pattern matching. Potential causes include:
 - *Schema complexity*: The relational projection requires understanding foreign key relationships and join semantics.
 - *Predicate mismatch*: SQL column names may not align with natural language descriptions as directly as RDF predicates.
 - *Over-constrained queries*: SQL's explicit join syntax may lead to overly restrictive conditions.
-
-Notably, the overall zero-result rate is diluted by the high volume of successful semantic search calls (which never return empty). When considering only structured query tools, the failure rate is substantial.
 
 === Incomplete Result Selection
 
@@ -677,7 +664,7 @@ This finding aligns with recent text-to-SQL research showing that smaller models
 
 As noted in @sec:analysis, Search+SQL+SPARQL agents achieve the highest Hit\@5 but do not dominate on precision or F1. This is surprising: one might expect that providing access to both a graph-native query language (SPARQL) and a relational query language (SQL) would yield complementary benefits, with each excelling on different query types.
 
-However, the item-level correlation analysis (@sec:correlation, @tab:correlation) reveals that SQL and SPARQL are largely *redundant* rather than complementary. The per-item F1 correlation between Search+SPARQL and Search+SQL is $r = 0.92$ (GPT-5) and $r = 0.90$ (GPT-5-mini)---indicating that these configurations succeed and fail on nearly identical items. Only 12.8% of items show complementary behavior (one language succeeds while the other fails); the remaining 87.2% are redundant (both succeed or both fail).
+However, the item-level correlation analysis (@sec:correlation, @tab:correlation) reveals that SQL and SPARQL are largely *redundant* rather than complementary. The per-item F1 correlation between Search+SPARQL and Search+SQL is $r = 0.92$ (GPT-5) and $r = 0.90$ (GPT-5-mini)---indicating that these configurations succeed and fail on nearly identical items. Only 12.8% of items show complementary behavior (one language succeeds while the other fails). The remaining 87.2% are redundant (both succeed or both fail).
 
 When both tools are available, the agent does not consistently leverage one for graph patterns and the other for aggregations---instead, it faces additional decision overhead without gaining new expressive power. We attribute the multi-tool agent's failure to dominate to three factors:
 
@@ -730,13 +717,13 @@ Our study has several limitations that suggest directions for future work:
 
 - *Static knowledge graph*: We do not evaluate performance on evolving knowledge graphs or the impact of knowledge staleness.
 
-- *Prompt sensitivity*: Our system prompt (@sec:system-prompt) is extensively engineered with retry limits, parallelization instructions, and output format constraints. We do not evaluate sensitivity to prompt phrasing; different formulations may yield different performance characteristics.
+- *Prompt sensitivity*: Our system prompt (@sec:system-prompt) is extensively engineered with retry limits, parallelization instructions, and output format constraints. We do not evaluate sensitivity to prompt phrasing, and different formulations may yield different performance characteristics.
 
 - *No statistical significance testing*: Despite running 6 repetitions per configuration, we report only means and standard deviations without formal significance tests. Differences of 2--3 pp between SPARQL and SQL fall within observed standard deviations, so the SPARQL advantage may not be statistically significant.
 
 = Conclusion
 
-We presented an agentic RAG system that combines semantic vector search with schema-bound query execution (SQL and SPARQL) over the STaRK-Prime biomedical knowledge graph. Through a controlled comparison of four agent configurations across two model scales and six repetitions, we established three main findings. First, structured query access provides a substantial advantage over pure semantic search (+15.5 pp F1), confirming that multi-hop relational queries exceed the capabilities of embedding-based retrieval. Second, SQL and SPARQL are largely redundant rather than complementary ($r > 0.9$ item-level correlation), with SPARQL holding a modest but consistent edge (+2--3 pp F1); practitioners should choose one query language based on infrastructure constraints rather than providing both. Third, the dominant bottleneck for structured-query agents is entity resolution, not LLM reasoning capacity: scaling from GPT-5-mini to GPT-5 yields minimal improvement when structured query tools are available, while 34.9% of queries fail due to incomplete entity coverage during semantic search.
+We presented an agentic RAG system that combines semantic vector search with schema-bound query execution (SQL and SPARQL) over the STaRK-Prime biomedical knowledge graph. Through a controlled comparison of four agent configurations across two model scales and six repetitions, we established three main findings. First, structured query access provides a substantial advantage over pure semantic search (+15.5 pp F1), confirming that multi-hop relational queries exceed the capabilities of embedding-based retrieval. Second, SQL and SPARQL are largely redundant rather than complementary ($r > 0.9$ item-level correlation), with SPARQL holding a modest but consistent edge (+2--3 pp F1). Practitioners should choose one query language based on infrastructure constraints rather than providing both. Third, the dominant bottleneck for structured-query agents is entity resolution, not LLM reasoning capacity: scaling from GPT-5-mini to GPT-5 yields minimal improvement when structured query tools are available, while 34.9% of queries fail due to incomplete entity coverage during semantic search.
 
 These results suggest that future work should prioritize improving entity resolution quality---through better embeddings, synonym expansion, or hybrid lexical-semantic retrieval---over more sophisticated query generation or larger language models. Extending this evaluation to additional domains, knowledge graph schemas, and open-source model families would further strengthen the generalizability of our findings.
 
