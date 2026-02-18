@@ -42,8 +42,7 @@ PRIME_QA_SYNTH_URL = (
 )
 
 PRIME_QA_HUMAN_URL = (
-    "https://huggingface.co/datasets/snap-stanford/stark/resolve/main/"
-    "qa/prime/stark_qa/stark_qa_human_generated_eval.csv?download=true"
+    "https://stark.stanford.edu/data/primekg/stark_qa_human_generated_eval.csv"
 )
 
 # Local paths for QA datasets (for benchmarking)

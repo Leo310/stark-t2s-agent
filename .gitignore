@@ -4,6 +4,9 @@ benchmark_runs*
 
 .DS_Store
 
+# direnv
+.direnv/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
