@@ -29,7 +29,6 @@ from stark_prime_t2s.config import (
     OPENROUTER_API_KEY,
     OPENROUTER_BASE_URL,
     QDRANT_COLLECTION,
-    QDRANT_COLLECTION_FULL,
     QDRANT_HOST,
     QDRANT_PORT,
 )
@@ -41,13 +40,19 @@ class EntityInfo(BaseModel):
     id: int = Field(description="The unique node ID")
     type: str = Field(description="The entity type (e.g., 'disease', 'drug')")
     name: str = Field(description="The entity name")
-    description: str | None = Field(default=None, description="Entity description if available")
+    description: str | None = Field(
+        default=None, description="Entity description if available"
+    )
 
     def to_search_text(self) -> str:
         """Create text for embedding/search."""
         parts = [f"{self.type}: {self.name}"]
         if self.description:
-            desc = self.description[:500] if len(self.description) > 500 else self.description
+            desc = (
+                self.description[:500]
+                if len(self.description) > 500
+                else self.description
+            )
             parts.append(desc)
         return "\n".join(parts)
 
@@ -66,7 +71,9 @@ class EntitySearchResult(BaseModel):
         lines = [f"Found {len(self.entities)} entities matching '{self.query}':", ""]
 
         for i, entity in enumerate(self.entities, 1):
-            lines.append(f"{i}. [{entity['type']}] {entity['name']} (ID: {entity['id']})")
+            lines.append(
+                f"{i}. [{entity['type']}] {entity['name']} (ID: {entity['id']})"
+            )
             if entity.get("description"):
                 lines.append(f"   {entity.get('description', '')}")
             lines.append("")
@@ -111,7 +118,9 @@ def _get_embeddings() -> Embeddings:
             from langchain_openai import OpenAIEmbeddings
 
             api_key = SecretStr(OPENAI_API_KEY) if OPENAI_API_KEY else None
-            base_url = EMBEDDING_BASE_URL or OPENROUTER_BASE_URL  # Allow custom base URL override
+            base_url = (
+                EMBEDDING_BASE_URL or OPENROUTER_BASE_URL
+            )  # Allow custom base URL override
             _embeddings = OpenAIEmbeddings(
                 model=EMBEDDING_MODEL,
                 check_embedding_ctx_length=False,
@@ -154,7 +163,9 @@ def _get_embeddings() -> Embeddings:
             _embeddings = AzureOpenAIEmbeddings(
                 model=EMBEDDING_MODEL,
                 azure_endpoint=AZURE_OPENAI_ENDPOINT,
-                api_key=SecretStr(AZURE_OPENAI_API_KEY) if AZURE_OPENAI_API_KEY else None,
+                api_key=(
+                    SecretStr(AZURE_OPENAI_API_KEY) if AZURE_OPENAI_API_KEY else None
+                ),
                 azure_deployment=AZURE_OPENAI_EMBEDDING_DEPLOYMENT,
             )
 
@@ -212,10 +223,6 @@ def _normalize_entity_type(entity_type: str) -> str:
     return et
 
 
-def _get_collection_name(use_full: bool) -> str:
-    return QDRANT_COLLECTION_FULL if use_full else QDRANT_COLLECTION
-
-
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -233,7 +240,9 @@ def build_entity_index(_force_rebuild: bool = False) -> int:
     if _collection_exists():
         client = _get_qdrant_client()
         info = client.get_collection(QDRANT_COLLECTION)
-        print(f"  ✓ Qdrant collection '{QDRANT_COLLECTION}' ready ({info.points_count} entities)")
+        print(
+            f"  ✓ Qdrant collection '{QDRANT_COLLECTION}' ready ({info.points_count} entities)"
+        )
         return int(info.points_count or 0)
     else:
         print(f"  Warning: Qdrant collection '{QDRANT_COLLECTION}' not found or empty")
@@ -245,7 +254,6 @@ def search_entities(
     query: str,
     entity_type: str | None = None,
     top_k: int = 5,
-    use_full: bool = True,
 ) -> EntitySearchResult:
     """Search for entities matching a query.
 
@@ -299,7 +307,7 @@ def search_entities(
 
         # Search
         results = client.query_points(
-            collection_name=_get_collection_name(use_full),
+            collection_name=QDRANT_COLLECTION,
             query=query_vector,
             limit=top_k,
             query_filter=search_filter,
@@ -313,7 +321,9 @@ def search_entities(
             full_name = payload.get("full_name", "")
             # Show full name in parentheses if different from short name
             display_name = (
-                f"{name} ({full_name})" if full_name and full_name.lower() != name.lower() else name
+                f"{name} ({full_name})"
+                if full_name and full_name.lower() != name.lower()
+                else name
             )
 
             entities.append(
@@ -347,7 +357,6 @@ def search_entities_tool(
     query: str,
     entity_type: str | None = None,
     top_k: int = 5,
-    use_full: bool = True,
 ) -> str:
     """Search for entities in the STaRK-Prime knowledge base by name or description.
 
@@ -369,8 +378,6 @@ def search_entities_tool(
                - "biological_process" - Biological processes
                - "exposure" - Environmental exposures
                Leave empty to search all entity types.
-        use_full: Use the full-description Qdrant index (default True). Set False
-                  to search the shorter/truncated index.
         top_k: Maximum number of results to return (default 5).
 
     Returns:
@@ -388,7 +395,6 @@ def search_entities_tool(
         query,
         entity_type=entity_type,
         top_k=top_k,
-        use_full=use_full,
     )
     return result.to_string()
 
